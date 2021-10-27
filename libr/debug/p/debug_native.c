@@ -16,9 +16,10 @@
 #include "native/drx.c" // x86 specific
 #include "r_cons.h"
 
-static int r_debug_native_continue (RDebug *dbg, int pid, int tid, int sig);
-static int r_debug_native_reg_read (RDebug *dbg, int type, ut8 *buf, int size);
-static int r_debug_native_reg_write (RDebug *dbg, int type, const ut8* buf, int size);
+static bool r_debug_native_continue(RDebug *dbg, int pid, int tid, int sig);
+static int r_debug_native_reg_read(RDebug *dbg, int type, ut8 *buf, int size);
+static int r_debug_native_reg_write(RDebug *dbg, int type, const ut8* buf, int size);
+struct r_debug_desc_plugin_t r_debug_desc_plugin_native;
 
 #include "native/bt.c"
 
@@ -102,10 +103,9 @@ static int r_debug_handle_signals(RDebug *dbg) {
 }
 #endif
 
-//this is temporal
 #if __APPLE__ || __linux__
 
-static char *r_debug_native_reg_profile (RDebug *dbg) {
+static char *r_debug_native_reg_profile(RDebug *dbg) {
 #if __APPLE__
 	return xnu_reg_profile (dbg);
 #elif __linux__
@@ -117,7 +117,7 @@ static char *r_debug_native_reg_profile (RDebug *dbg) {
 #include "native/reg.c" // x86 specific
 
 #endif
-static int r_debug_native_step (RDebug *dbg) {
+static bool r_debug_native_step(RDebug *dbg) {
 #if __APPLE__
 	return xnu_step (dbg);
 #elif __WINDOWS__
@@ -134,12 +134,10 @@ static int r_debug_native_step (RDebug *dbg) {
 #endif
 }
 
-// return thread id
-static int r_debug_native_attach (RDebug *dbg, int pid) {
-#if 0
-	if (!dbg || pid == dbg->pid)
-		return dbg->tid;
-#endif
+static bool r_debug_native_attach(RDebug *dbg, int pid) {
+	if (pid < 0) {
+		return false;
+	}
 #if __APPLE__
 	return xnu_attach (dbg, pid);
 #elif __WINDOWS__
@@ -150,18 +148,18 @@ static int r_debug_native_attach (RDebug *dbg, int pid) {
 	if (ptrace (PT_ATTACH, pid, 0, 0) != -1) {
 		perror ("ptrace (PT_ATTACH)");
 	}
-	return pid;
+	return true;
 #else
 	int ret = ptrace (PTRACE_ATTACH, pid, 0, 0);
 	if (ret != -1) {
 		eprintf ("Trying to attach to %d\n", pid);
 		perror ("ptrace (PT_ATTACH)");
 	}
-	return pid;
+	return true;
 #endif
 }
 
-static int r_debug_native_detach (RDebug *dbg, int pid) {
+static bool r_debug_native_detach(RDebug *dbg, int pid) {
 #if __APPLE__
 	return xnu_detach (dbg, pid);
 #elif __WINDOWS__
@@ -174,18 +172,18 @@ static int r_debug_native_detach (RDebug *dbg, int pid) {
 }
 
 #if __WINDOWS__ || __linux__
-static int r_debug_native_select(RDebug *dbg, int pid, int tid) {
+static bool r_debug_native_select(RDebug *dbg, int pid, int tid) {
 #if __WINDOWS__
 	return w32_select (dbg, pid, tid);
 #elif __linux__
 	return linux_select (dbg, pid, tid);
 #else
-	return -1;
+	return false;
 #endif
 }
 #endif
 
-static int r_debug_native_continue_syscall (RDebug *dbg, int pid, int num) {
+static bool r_debug_native_continue_syscall(RDebug *dbg, int pid, int num) {
 // XXX: num is ignored
 #if __linux__
 	linux_set_options (dbg, pid);
@@ -196,7 +194,7 @@ static int r_debug_native_continue_syscall (RDebug *dbg, int pid, int num) {
 	return ptrace (PTRACE_SYSCALL, pid, (void*)(size_t)pc, 0) == 0;
 #else
 	eprintf ("TODO: continue syscall not implemented yet\n");
-	return -1;
+	return false;
 #endif
 }
 
@@ -217,14 +215,9 @@ static int r_debug_native_stop(RDebug *dbg) {
 #endif
 }
 
-/* TODO: specify thread? */
-static int r_debug_native_continue(RDebug *dbg, int pid, int tid, int sig) {
+static bool r_debug_native_continue(RDebug *dbg, int pid, int tid, int sig) {
 #if __APPLE__
-	bool ret = xnu_continue (dbg, pid, tid, sig);
-	if (!ret) {
-		return -1;
-	}
-	return tid;
+	return xnu_continue (dbg, pid, tid, sig);
 #elif __WINDOWS__
 	return w32_continue (dbg, pid, tid, sig);
 #elif __BSD__
@@ -255,11 +248,11 @@ static int r_debug_native_continue(RDebug *dbg, int pid, int tid, int sig) {
 			r_sys_perror ("PTRACE_CONT");
 		}
 	}
-	return ret >= 0 ? tid : 0;
+	return ret >= 0;
 #endif
 }
 
-static RDebugInfo* r_debug_native_info (RDebug *dbg, const char *arg) {
+static RDebugInfo* r_debug_native_info(RDebug *dbg, const char *arg) {
 #if __APPLE__
 	return xnu_info (dbg, arg);
 #elif __WINDOWS__
@@ -305,7 +298,7 @@ static RDebugReasonType r_debug_native_wait(RDebug *dbg, int pid) {
 	// require switching to the event's thread that shouldn't bother the user
 	int orig_tid = dbg->tid;
 	bool restore_thread = false;
-	W32DbgWInst *wrap = dbg->user;
+	RW32Dw *wrap = dbg->user;
 
 	if (pid == -1) {
 		eprintf ("ERROR: r_debug_native_wait called with pid -1\n");
@@ -411,7 +404,8 @@ static RDebugReasonType r_debug_native_wait(RDebug *dbg, int pid) {
 
 	if (restore_thread) {
 		// Attempt to return to the original thread after handling the event
-		dbg->tid = w32_select(dbg, dbg->pid, orig_tid);
+		w32_select (dbg, dbg->pid, orig_tid);
+		// dbg->tid = w32_select (dbg, dbg->pid, orig_tid);
 		if (dbg->tid == -1) {
 			dbg->pid = -1;
 			reason = R_DEBUG_REASON_DEAD;
@@ -487,14 +481,10 @@ static RDebugReasonType r_debug_native_wait(RDebug *dbg, int pid) {
 		r_sys_perror ("waitpid");
 		return R_DEBUG_REASON_ERROR;
 	}
-
-	//eprintf ("r_debug_native_wait: status=%d (0x%x) (return=%d)\n", status, status, ret);
-
 #ifdef WAIT_ON_ALL_CHILDREN
 	if (ret != pid) {
 		reason = R_DEBUG_REASON_NEW_PID;
-		eprintf ("switching to pid %d\n", ret);
-		r_debug_select (dbg, ret, ret);
+		r_debug_select (dbg, ret, -1);
 	}
 #endif // WAIT_ON_ALL_CHILDREN
 	// TODO: switch status and handle reasons here
@@ -633,7 +623,7 @@ static RList *r_debug_native_threads (RDebug *dbg, int pid) {
 #if __sun || __NetBSD__ || __KFBSD__ || __OpenBSD__ || __DragonFly__
 
 //Function to read register from Linux, BSD, Android systems
-static int bsd_reg_read (RDebug *dbg, int type, ut8* buf, int size) {
+static int bsd_reg_read(RDebug *dbg, int type, ut8* buf, int size) {
 	int showfpu = false;
 	int pid = dbg->pid;
 	int ret;
@@ -778,8 +768,24 @@ static int io_perms_to_prot (int io_perms) {
 	return prot_perms;
 }
 
+#if __linux__
+static int thp_mode(void) {
+	const char *thp = "/sys/kernel/mm/transparent_hugepage/enabled";
+	int ret = 0;
+	char *val = r_file_slurp (thp, NULL);
+	if (val) {
+		if (strstr (val, "[madvise]")) {
+			ret = 1;
+		} else if (strstr (val, "[always]")) {
+			ret = 2;
+		}
+		free (val);
+	}
+	return ret;
+}
+#endif
 
-static int linux_map_thp (RDebug *dbg, ut64 addr, int size) {
+static int linux_map_thp(RDebug *dbg, ut64 addr, int size) {
 #if !defined(__ANDROID__) && defined(MADV_HUGEPAGE)
 	RBuffer *buf = NULL;
 	char code[1024];
@@ -792,19 +798,19 @@ static int linux_map_thp (RDebug *dbg, ut64 addr, int size) {
 	// In architectures where radare is supported, arm and x86, it is 2MB
 	const size_t thpsize = 1<<21;
 
-	if ((size%thpsize)) {
+	if (size % thpsize) {
 		eprintf ("size not a power of huge pages size\n");
 		return false;
 	}
-
+#if __linux__
 	// In always mode, is more into mmap syscall level
 	// even though the address might not have the 'hg'
 	// vmflags
-	if (r_sys_thp_mode() != 1) {
+	if (thp_mode () != 1) {
 		eprintf ("transparent huge page mode is not in madvise mode\n");
 		return false;
 	}
-
+#endif
 	int num = r_syscall_get_num (dbg->anal->syscall, "madvise");
 
 	snprintf (code, sizeof (code),
@@ -1212,14 +1218,15 @@ static bool r_debug_native_kill(RDebug *dbg, int pid, int tid, int sig) {
 	return ret;
 }
 
-struct r_debug_desc_plugin_t r_debug_desc_plugin_native;
-static int r_debug_native_init (RDebug *dbg) {
+static bool r_debug_native_init(RDebug *dbg) {
 	dbg->h->desc = r_debug_desc_plugin_native;
 #if __WINDOWS__
-	return w32_init (dbg);
-#else
-	return true;
+	r_w32_init ();
+	if (!dbg->user && dbg->iob.io->dbgwrap) {
+		dbg->user = (RW32Dw *)dbg->iob.io->dbgwrap;
+	}
 #endif
+	return true;
 }
 
 #if __i386__ || __x86_64__

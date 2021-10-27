@@ -55,17 +55,14 @@ static int shm__read(RIO *io, RIODesc *fd, ut8 *buf, int count) {
 	return read (shm->fd, buf, count);
 }
 
-static int shm__close(RIODesc *fd) {
+static bool shm__close(RIODesc *fd) {
 	r_return_val_if_fail (fd && fd->data, -1);
-	int ret;
 	RIOShm *shm = fd->data;
-	if (shm->buf) {
-		ret = shmdt (((RIOShm*)(fd->data))->buf);
-	} else {
-		ret = close (shm->fd);
-	}
+	int ret = (shm->buf)
+		? shmdt (((RIOShm*)(fd->data))->buf)
+		: close (shm->fd);
 	R_FREE (fd->data);
-	return ret;
+	return ret == 0;
 }
 
 static ut64 shm__lseek(RIO *io, RIODesc *fd, ut64 offset, int whence) {
@@ -144,7 +141,7 @@ RIOPlugin r_io_plugin_shm = {
 #else
 RIOPlugin r_io_plugin_shm = {
 	.name = "shm",
-	.desc = "shared memory resources (not for w32)",
+	.desc = "shared memory resources (not for this platform)",
 };
 #endif
 

@@ -300,12 +300,15 @@ typedef struct r_bin_file_t {
 } RBinFile;
 
 typedef struct r_bin_file_options_t {
+	const char *pluginname;
+	ut64 baseaddr; // where the linker maps the binary in memory
+	ut64 loadaddr; // starting physical address to read from the target file
+	// ut64 paddr; // offset
+	ut64 sz;
+	int xtr_idx; // load Nth binary
 	int rawstr;
-	ut64 baddr; // base address
-	ut64 laddr; // load address
-	ut64 paddr; // offset
-	const char *plugname; // force a plugin? why do i need this?
-	// const char *xtrname;
+	int fd;
+	const char *filename;
 } RBinFileOptions;
 
 struct r_bin_t {
@@ -338,7 +341,8 @@ struct r_bin_t {
 	char *prefix; // bin.prefix
 	char *strenc;
 	ut64 filter_rules;
-	bool demanglercmd;
+	bool demangle_usecmd;
+	bool demangle_trylib;
 	bool verbose;
 	bool use_xtr; // use extract plugins when loading a file?
 	bool use_ldr; // use loader plugins when loading a file?
@@ -654,31 +658,20 @@ R_API void r_bin_string_free(void *_str);
 
 #ifdef R_API
 
-typedef struct r_bin_options_t {
-	const char *pluginname;
-	ut64 baseaddr; // where the linker maps the binary in memory
-	ut64 loadaddr; // starting physical address to read from the target file
-	ut64 sz;
-	int xtr_idx; // load Nth binary
-	int rawstr;
-	int fd;
-	const char *filename;
-} RBinOptions;
-
 R_API RBinImport *r_bin_import_clone(RBinImport *o);
 R_API const char *r_bin_symbol_name(RBinSymbol *s);
 typedef void (*RBinSymbolCallback)(RBinObject *obj, RBinSymbol *symbol);
 
 // options functions
-R_API void r_bin_options_init(RBinOptions *opt, int fd, ut64 baseaddr, ut64 loadaddr, int rawstr);
+R_API void r_bin_file_options_init(RBinFileOptions *opt, int fd, ut64 baseaddr, ut64 loadaddr, int rawstr);
 R_API void r_bin_arch_options_init(RBinArchOptions *opt, const char *arch, int bits);
 
 // open/close/reload functions
 R_API RBin *r_bin_new(void);
 R_API void r_bin_free(RBin *bin);
-R_API bool r_bin_open(RBin *bin, const char *file, RBinOptions *opt);
-R_API bool r_bin_open_io(RBin *bin, RBinOptions *opt);
-R_API bool r_bin_open_buf(RBin *bin, RBuffer *buf, RBinOptions *opt);
+R_API bool r_bin_open(RBin *bin, const char *file, RBinFileOptions *opt);
+R_API bool r_bin_open_io(RBin *bin, RBinFileOptions *opt);
+R_API bool r_bin_open_buf(RBin *bin, RBuffer *buf, RBinFileOptions *opt);
 R_API bool r_bin_reload(RBin *bin, ut32 bf_id, ut64 baseaddr);
 
 // plugins/bind functions
@@ -706,7 +699,7 @@ R_API RList *r_bin_dump_strings(RBinFile *a, int min, int raw);
 // use RBinFile instead
 R_API RList *r_bin_get_entries(RBin *bin);
 R_API RList *r_bin_get_fields(RBin *bin);
-R_API RList *r_bin_get_imports(RBin *bin);
+R_API const RList *r_bin_get_imports(RBin *bin);
 R_API RList *r_bin_get_libs(RBin *bin);
 R_API RBNode *r_bin_patch_relocs(RBin *bin);
 R_API RList *r_bin_patch_relocs_list(RBin *bin);
@@ -786,7 +779,7 @@ R_API char *r_bin_demangle(RBinFile *binfile, const char *lang, const char *str,
 R_API char *r_bin_demangle_java(const char *str);
 R_API char *r_bin_demangle_cxx(RBinFile *binfile, const char *str, ut64 vaddr);
 R_API char *r_bin_demangle_msvc(const char *str);
-R_API char *r_bin_demangle_swift(const char *s, bool syscmd);
+R_API char *r_bin_demangle_swift(const char *s, bool syscmd, bool trylib);
 R_API char *r_bin_demangle_objc(RBinFile *binfile, const char *sym);
 R_API char *r_bin_demangle_rust(RBinFile *binfile, const char *str, ut64 vaddr);
 R_API int r_bin_demangle_type(const char *str);
@@ -863,6 +856,7 @@ extern RBinPlugin r_bin_plugin_nes;
 extern RBinPlugin r_bin_plugin_qnx;
 extern RBinPlugin r_bin_plugin_mbn;
 extern RBinPlugin r_bin_plugin_smd;
+extern RBinPlugin r_bin_plugin_msx;
 extern RBinPlugin r_bin_plugin_sms;
 extern RBinPlugin r_bin_plugin_psxexe;
 extern RBinPlugin r_bin_plugin_vsf;
@@ -881,6 +875,7 @@ extern RBinPlugin r_bin_plugin_dmp64;
 extern RBinPlugin r_bin_plugin_pyc;
 extern RBinPlugin r_bin_plugin_off;
 extern RBinPlugin r_bin_plugin_tic;
+extern RBinPlugin r_bin_plugin_hunk;
 
 #ifdef __cplusplus
 }

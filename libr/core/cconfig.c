@@ -483,7 +483,7 @@ static bool cb_scrrainbow(void *user, void *data) {
 	return true;
 }
 
-static bool cb_asmpseudo (void *user, void *data) {
+static bool cb_asmpseudo(void *user, void *data) {
 	RCore *core = (RCore *) user;
 	RConfigNode *node = (RConfigNode *) data;
 	core->rasm->pseudo = node->i_value;
@@ -505,6 +505,18 @@ static bool cb_asmsubsec(void *user, void *data) {
 static bool cb_asmassembler(void *user, void *data) {
 	RCore *core = (RCore *) user;
 	RConfigNode *node = (RConfigNode *) data;
+	if (*node->value == '?') {
+		if (strlen (node->value) > 1 && node->value[1] == '?') {
+			/* print more verbose help instead of plain option values */
+			rasm2_list (core, NULL, node->value[1]);
+			return false;
+		}
+		RConfigNode* asm_arch_node = r_config_node_get (core->config, "asm.arch");
+		if (asm_arch_node) {
+			print_node_options (asm_arch_node);
+		}
+		return false;
+	}
 	r_asm_use_assembler (core->rasm, node->value);
 	return true;
 }
@@ -755,13 +767,10 @@ static bool cb_asmbits(void *user, void *data) {
 	if (!bits) {
 		return false;
 	}
-#if 0
-// TODO: pretty good optimization, but breaks many tests when arch is different i think
 	if (bits == core->rasm->bits && bits == core->anal->bits && bits == core->dbg->bits) {
 		// early optimization
 		return true;
 	}
-#endif
 	if (bits > 0) {
 		ret = r_asm_set_bits (core->rasm, bits);
 		if (!ret) {
@@ -1070,7 +1079,7 @@ static bool cb_binfilter(void *user, void *data) {
 static bool cb_bdc(void *user, void *data) {
 	RCore *core = (RCore*) user;
 	RConfigNode *node = (RConfigNode*) data;
-	core->bin->demanglercmd = node->i_value;
+	core->bin->demangle_usecmd = node->i_value;
 	return true;
 }
 
@@ -1382,21 +1391,11 @@ static bool cb_cfg_fortunes_type(void *user, void *data) {
 	return true;
 }
 
-static void check_decompiler(const char* name) {
-	char *path = r_file_path (name);
-	if (path && path[0] == '/') {
-		r_cons_printf ("!*%s\n", name);
-	}
-	free (path);
-}
-
 static bool cb_cmdpdc(void *user, void *data) {
 	RCore *core = (RCore *) user;
 	RConfigNode *node = (RConfigNode *)data;
 	if (*node->value == '?') {
 		r_cons_printf ("pdc\n");
-		// spaguetti
-		check_decompiler ("r2retdec");
 		RListIter *iter;
 		RCorePlugin *cp;
 		r_list_foreach (core->rcmd->plist, iter, cp) {
@@ -1406,9 +1405,6 @@ static bool cb_cmdpdc(void *user, void *data) {
 				r_cons_printf ("pdg\n");
 			}
 		}
-		check_decompiler ("r2ghidra");
-		check_decompiler ("r2jadx");
-		check_decompiler ("r2snow");
 		RConfigNode *r2dec = r_config_node_get (core->config, "r2dec.asm");
 		if (r2dec) {
 			r_cons_printf ("pdd\n");
@@ -2213,14 +2209,14 @@ static bool cb_scr_color_grep(void *user, void *data) {
 	RConfigNode *node = (RConfigNode *) data;
 
 	/* Let cons know we have a new pager. */
-	core->cons->grep_color = node->i_value;
+	core->cons->context->grep_color = node->i_value;
 	return true;
 }
 
 static bool cb_scr_color_grep_highlight(void *user, void *data) {
 	RCore *core = (RCore *) user;
 	RConfigNode *node = (RConfigNode *) data;
-	core->cons->grep_highlight = node->i_value;
+	core->cons->context->grep_highlight = node->i_value;
 	return true;
 }
 
@@ -2292,14 +2288,8 @@ static bool cb_scrfgets(void* user, void* data) {
 
 static bool cb_scrhtml(void *user, void *data) {
 	RConfigNode *node = (RConfigNode *) data;
-	r_cons_singleton ()->is_html = node->i_value;
+	r_cons_context ()->is_html = node->i_value;
 	// TODO: control error and restore old value (return false?) show errormsg?
-	return true;
-}
-
-static bool cb_newshell(void *user, void *data) {
-	// uncommenting this will break 39 tests
-	// eprintf ("Warning: newshell has been temporarily disabled\n");
 	return true;
 }
 
@@ -2367,7 +2357,7 @@ static bool cb_scrpagesize(void *user, void *data) {
 
 static bool cb_scrflush(void *user, void *data) {
 	RConfigNode *node = (RConfigNode *) data;
-	r_cons_singleton ()->flush = node->i_value;
+	r_cons_context ()->flush = node->i_value;
 	return true;
 }
 
@@ -2449,6 +2439,12 @@ static bool cb_scrnkey(void *user, void *data) {
 		print_node_options (node);
 		return false;
 	}
+	return true;
+}
+
+static bool cb_scr_demo(void *user, void *data) {
+	RConfigNode *node = (RConfigNode *) data;
+	r_cons_singleton ()->context->demo = node->i_value;
 	return true;
 }
 
@@ -2664,6 +2660,16 @@ static bool cb_binstrings(void *user, void *data) {
 	return true;
 }
 
+static bool cb_demangle_trylib(void *user, void *data) {
+	RCore *core = (RCore *) user;
+	RConfigNode *node = (RConfigNode *) data;
+	if (!core || !core->bin) {
+		return false;
+	}
+	core->bin->demangle_trylib = node->i_value;
+	return true;
+}
+
 static bool cb_bindbginfo(void *user, void *data) {
 	RCore *core = (RCore *) user;
 	RConfigNode *node = (RConfigNode *) data;
@@ -2756,7 +2762,6 @@ static bool cb_searchin(void *user, void *data) {
 			"raw                search in raw io (ignoring bounds)\n"
 			"block              search in the current block\n"
 			"io.map             search in current map\n"
-			"io.sky.[rwx]       search in all skyline segments\n"
 			"io.maps            search in all maps\n"
 			"io.maps.[rwx]      search in all r-w-x io maps\n"
 			"bin.segment        search in current mapped segment\n"
@@ -2837,6 +2842,12 @@ static bool cb_anal_roregs(RCore *core, RConfigNode *node) {
 
 static bool cb_anal_gp(RCore *core, RConfigNode *node) {
 	core->anal->gp = node->i_value;
+	return true;
+}
+
+static bool cb_anal_cs(RCore *core, RConfigNode *node) {
+	// core->anal->cs = node->i_value;
+	core->print->segbas = node->i_value;
 	return true;
 }
 
@@ -3114,7 +3125,7 @@ static bool cb_prjvctype(void *user, void *data) {
 		return true;
 	}
 	eprintf ("Unknown vc %s\n", node->value);
-	return true;
+	return false;
 }
 
 R_API int r_core_config_init(RCore *core) {
@@ -3175,6 +3186,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETCB ("anal.verbose", "false", &cb_analverbose, "Show RAnal warnings when analyzing code");
 	SETBPREF ("anal.a2f", "false",  "Use the new WIP analysis algorithm (core/p/a2f), anal.depth ignored atm");
 	SETCB ("anal.roregs", "gp,zero", (RConfigCallback)&cb_anal_roregs, "Comma separated list of register names to be readonly");
+	SETICB ("anal.cs", 0, (RConfigCallback)&cb_anal_cs, "Set the value for the x86-16 CS segment register (see asm.seggrn and asm.segoff)");
 	SETICB ("anal.gp", 0, (RConfigCallback)&cb_anal_gp, "Set the value of the GP register (MIPS)");
 	SETBPREF ("anal.gpfixed", "true", "Set gp register to anal.gp before emulating each instruction in aae");
 	SETCB ("anal.limits", "false", (RConfigCallback)&cb_anal_limits, "Restrict analysis to address range [anal.from:anal.to]");
@@ -3254,9 +3266,9 @@ R_API int r_core_config_init(RCore *core) {
 	SETCB ("dbg.malloc", "jemalloc", &cb_malloc, "Choose malloc structure parser");
 #endif
 #if __GLIBC_MINOR__ > 25
-	SETBPREF ("dbg.glibc.tcache", "true", "Set glib tcache parsing");
+	SETBPREF ("dbg.glibc.tcache", "true", "Parse the tcache (glibc.minor > 2.25.x)");
 #else
-	SETBPREF ("dbg.glibc.tcache", "false", "Set glib tcache parsing");
+	SETBPREF ("dbg.glibc.tcache", "false", "Parse the tcache (glibc.minor > 2.25.x)");
 #endif
 #if __x86_64__
 	SETI ("dbg.glibc.ma_offset", 0x000000, "Main_arena offset from his symbol");
@@ -3465,6 +3477,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF ("bin.cache", "false", "Use io.cache.read if bin needs to patch relocs");
 	SETPREF ("bin.lang", "", "Language for bin.demangle");
 	SETBPREF ("bin.demangle", "true", "Import demangled symbols from RBin");
+	SETCB("bin.demangle.trylib", "true", &cb_demangle_trylib, "Try to use system available libraries to demangle");
 	SETBPREF ("bin.demangle.libs", "false", "Show library name on demangled symbols names");
 	SETI ("bin.baddr", -1, "Base address of the binary");
 	SETI ("bin.laddr", 0, "Base address for loading library ('*.so')");
@@ -3507,7 +3520,7 @@ R_API int r_core_config_init(RCore *core) {
 	r_config_set (cfg, "cfg.editor", r_str_get_fail (p, "vi"));
 #endif
 	free (p);
-	r_config_desc (cfg, "cfg.editor", "Select default editor program");
+	r_config_desc (cfg, "cfg.editor", "Select default editor program, portable %EDITOR");
 	char *whoami = r_sys_whoami ();
 	SETPREF ("cfg.user", whoami, "Set current username/pid");
 	free (whoami);
@@ -3519,9 +3532,6 @@ R_API int r_core_config_init(RCore *core) {
 	SETCB ("cfg.sandbox", "false", &cb_cfgsanbox, "Sandbox mode disables systems and open on upper directories");
 	SETBPREF ("cfg.wseek", "false", "Seek after write");
 	SETCB ("cfg.bigendian", "false", &cb_bigendian, "Use little (false) or big (true) endianness");
-	p = r_sys_getenv ("R2_CFG_NEWSHELL");
-	SETCB ("cfg.newshell", r_str_bool (p && atoi (p)), &cb_newshell, "Use new commands parser");
-	free (p);
 	SETI ("cfg.cpuaffinity", 0, "Run on cpuid");
 
 	/* log */
@@ -3611,7 +3621,6 @@ R_API int r_core_config_init(RCore *core) {
 	SETCB ("dbg.libs", "", &cb_dbg_libs, "If set stop when loading matching libname");
 	SETBPREF ("dbg.skipover", "false", "Make dso perform a dss (same goes for esil and visual/graph");
 	SETBPREF ("dbg.hwbp", "false", "Use hardware breakpoints instead of software ones when enabled");
-	SETCB ("dbg.", "true", &cb_dbg_verbose, "Verbose debug output");
 	SETCB ("dbg.unlibs", "", &cb_dbg_unlibs, "If set stop when unloading matching libname");
 	SETCB ("dbg.verbose", "false", &cb_dbg_verbose, "Verbose debug output");
 	SETBPREF ("dbg.slow", "false", "Show stack and regs in visual mode in a slow but verbose mode");
@@ -3903,6 +3912,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETCB ("scr.highlight.grep", "false", &cb_scr_color_grep_highlight, "Highlight (INVERT) the grepped words");
 	SETCB ("scr.prompt.popup", "false", &cb_scr_prompt_popup, "Show widget dropdown for autocomplete");
 	SETCB ("scr.prompt.vi", "false", &cb_scr_vi, "Use vi mode for input prompt");
+	SETPREF ("scr.prompt.tabhelp", "true", "Show command help when pressing the TAB key");
 	SETCB ("scr.prompt.mode", "false", &cb_scr_prompt_mode,  "Set prompt color based on vi mode");
 	SETBPREF ("scr.prompt.file", "false", "Show user prompt file (used by r2 -q)");
 	SETBPREF ("scr.prompt.flag", "false", "Show flag name in the prompt");
@@ -3922,7 +3932,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETCB ("scr.errmode", "echo", &cb_screrrmode, "Error string handling");
 	SETCB ("scr.utf8", r_str_bool (r_cons_is_utf8()), &cb_utf8, "Show UTF-8 characters instead of ANSI");
 	SETCB ("scr.utf8.curvy", "false", &cb_utf8_curvy, "Show curved UTF-8 corners (requires scr.utf8)");
-	SETBPREF ("scr.demo", "false", "Use demoscene effects if available");
+	SETCB ("scr.demo", "false", &cb_scr_demo, "Use demoscene effects if available");
 	SETCB ("scr.hist.block", "true", &cb_scr_histblock, "Use blocks for histogram");
 	SETCB ("scr.hist.filter", "true", &cb_scr_histfilter, "Filter history for matching lines when using up/down keys");
 	SETBPREF ("scr.hist.save", "true", "Always save history on exit");
@@ -3993,7 +4003,6 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF ("file.offset", "", "Offset where the file will be mapped at");
 	SETPREF ("file.type", "", "Type of current file");
 	SETI ("file.loadalign", 1024, "Alignment of load addresses");
-	SETI ("file.openmany", 1, "Maximum number of files opened at once");
 	/* magic */
 	SETI ("magic.depth", 100, "Recursivity depth in magic description strings");
 
@@ -4035,6 +4044,7 @@ R_API int r_core_config_init(RCore *core) {
 	/* RVC */
 	{
 		char *p = r_file_path ("git");
+		SETPREF ("prj.vc.message", "", "Default commit message for rvc/git");
 		if (strcmp (p, "git")) {
 			SETCB ("prj.vc.type", "git", &cb_prjvctype, "What should projects use as a vc");
 		} else {
@@ -4080,17 +4090,17 @@ R_API void r_core_parse_radare2rc(RCore *r) {
 			RListIter *iter;
 			RList *files = r_sys_dir (homerc);
 			r_list_foreach (files, iter, file) {
-					if (*file != '.') {
-						char *path = r_str_newf ("%s/%s", homerc, file);
-						if (r_file_is_regular (path)) {
-							if (has_debug) {
-								eprintf ("USER CONFIG loaded from %s\n", homerc);
-							}
-							r_core_cmd_file (r, path);
+				if (*file != '.') {
+					char *path = r_str_newf ("%s/%s", homerc, file);
+					if (r_file_is_regular (path)) {
+						if (has_debug) {
+							eprintf ("USER CONFIG loaded from %s\n", homerc);
 						}
-						free (path);
+						r_core_cmd_file (r, path);
 					}
+					free (path);
 				}
+			}
 			r_list_free (files);
 		}
 		free (homerc);

@@ -43,8 +43,8 @@ static GHT GH(get_va_symbol)(RCore *core, const char *path, const char *sym_name
 	RListIter *iter;
 	RBinSymbol *s;
 
-	RBinOptions opt;
-	r_bin_options_init (&opt, -1, 0, 0, false);
+	RBinFileOptions opt;
+	r_bin_file_options_init (&opt, -1, 0, 0, false);
 	bool res = r_bin_open (bin, path, &opt);
 	if (!res) {
 		return vaddr;
@@ -118,9 +118,9 @@ static bool GH(is_tcache)(RCore *core) {
 			}
 		}
 	} else {
-		int tcv = r_config_get_i (core->config, "dbg.glibc.tcache");
-		eprintf ("dbg.glibc.tcache = %i\n", tcv);
-		return tcv != 0;
+		bool tcv = r_config_get_b (core->config, "dbg.glibc.tcache");
+		// eprintf ("dbg.glibc.tcache = %i\n", tcv);
+		return tcv;
 	}
 	if (fp) {
 		v = r_num_get_float (NULL, fp + 5);
@@ -221,9 +221,14 @@ static void GH(get_brks)(RCore *core, GHT *brk_start, GHT *brk_end) {
 			}
 		}
 	} else {
-		void **it;
-		r_pvector_foreach (&core->io->maps, it) {
-			RIOMap *map = *it;
+		RIOBank *bank = r_io_bank_get (core->io, core->io->bank);
+		if (!bank) {
+			return;
+		}
+		RIOMapRef *mapref;
+		RListIter *iter;
+		r_list_foreach (bank->maprefs, iter, mapref) {
+			RIOMap *map = r_io_map_get (core->io, mapref->id);
 			if (map->name) {
 				if (strstr (map->name, "[heap]")) {
 					*brk_start = r_io_map_begin (map);
@@ -417,9 +422,14 @@ static bool GH(r_resolve_main_arena)(RCore *core, GHT *m_arena) {
 			}
 		}
 	} else {
-		void **it;
-		r_pvector_foreach (&core->io->maps, it) {
-			RIOMap *map = *it;
+		RIOBank *bank = r_io_bank_get (core->io, core->io->bank);
+		if (!bank) {
+			return false;
+		}
+		RIOMapRef *mapref;
+		RListIter *iter;
+		r_list_foreach (bank->maprefs, iter, mapref) {
+			RIOMap *map = r_io_map_get (core->io, mapref->id);
 			if (map->name && strstr (map->name, "arena")) {
 				libc_addr_sta = r_io_map_begin (map);
 				libc_addr_end = r_io_map_end (map);
@@ -1504,7 +1514,7 @@ static int GH(cmd_dbg_map_heap_glibc)(RCore *core, const char *input) {
 		return false;
 	}
 
-	r_config_set_i (core->config, "dbg.glibc.tcache", GH(is_tcache) (core));
+	r_config_set_b (core->config, "dbg.glibc.tcache", GH(is_tcache) (core));
 
 	int format = 'c';
 	bool get_state = false;

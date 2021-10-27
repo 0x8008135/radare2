@@ -1091,7 +1091,7 @@ static const char *radare_argv[] = {
 	"tu?", "tu", "tuj", "tu*", "tuc", "tt?", "tt", "ttj", "ttc",
 	"T?", "T", "T*", "T-", "Tl", "Tj", "Tm", "Ts", "TT", "T=", "T=.", "T=&",
 	"u?", "u", "uw", "us", "uc",
-	"v", "V", "v!", "vv", "vV", "vVV", "VV",
+	"v", "v.", "V", "v!", "vv", "vV", "vVV", "VV",
 	"w?", "w", "w1+", "w1-", "w2+", "w2-", "w4+", "w4-", "w8+", "w8-",
 	"w0", "w", "w6", "w6d", "w6e", "wa", "wa*", "waf", "wao?", "wao",
 	"wA?", "wA", "wB", "wB-", "wc", "wcj", "wc-", "wc+", "wc*", "wcr", "wci", "wcp", "wcp*", "wcpi",
@@ -1140,14 +1140,12 @@ static void autocomplete_mount_point(RLineCompletion *completion, RCore *core, c
 }
 
 static void autocomplete_ms_path(RLineCompletion *completion, RCore *core, const char *str, const char *path) {
+	r_return_if_fail (completion && core && str && path);
 	char *lpath = NULL, *dirname = NULL , *basename = NULL;
 	char *p = NULL;
 	char *pwd = (core->rfs && core->rfs->cwd && *(core->rfs->cwd)) ? *(core->rfs->cwd): ".";
 	int n = 0;
-	RList *list;
-	RListIter *iter;
 	RFSFile *file;
-	r_return_if_fail (path);
 	lpath = r_str_new (path);
 	p = (char *)r_str_last (lpath, R_SYS_DIR);
 	if (p) {
@@ -1160,9 +1158,9 @@ static void autocomplete_ms_path(RLineCompletion *completion, RCore *core, const
       			dirname = r_str_newf ("%s%s", lpath, R_SYS_DIR);
     		} else { // xxx/yyy
       			if (strlen (pwd) == 1) { // if pwd is root
-        			dirname = r_str_newf ("%s%s%s", R_SYS_DIR, lpath, R_SYS_DIR);
+				dirname = r_file_new ("", lpath, NULL);
       			} else {
-				dirname = r_str_newf ("%s%s%s%s", pwd, R_SYS_DIR, lpath, R_SYS_DIR);
+				dirname = r_file_new (pwd, lpath, NULL);
       			}
 		}
 		basename = r_str_new (p + 1);
@@ -1178,10 +1176,11 @@ static void autocomplete_ms_path(RLineCompletion *completion, RCore *core, const
 	if (!dirname || !basename) {
 		goto out;
 	}
-	list= r_fs_dir (core->fs, dirname);
+	RList *list = r_fs_dir (core->fs, dirname);
 	n = strlen (basename);
 	bool chgdir = !strncmp (str, "cd ", 3);
 	if (list) {
+		RListIter *iter;
 		r_list_foreach (list, iter, file) {
 			if (!file) {
 				continue;
@@ -1211,8 +1210,6 @@ static void autocomplete_process_path(RLineCompletion *completion, const char *s
 	char *lpath = NULL, *dirname = NULL , *basename = NULL;
 	char *home = NULL, *filename = NULL, *p = NULL;
 	int n = 0;
-	RList *list;
-	RListIter *iter;
 
 	if (!path) {
 		goto out;
@@ -1260,10 +1257,11 @@ static void autocomplete_process_path(RLineCompletion *completion, const char *s
 		goto out;
 	}
 
-	list= r_sys_dir (dirname);
+	RList *list = r_sys_dir (dirname);
 	n = strlen (basename);
 	bool chgdir = !strncmp (str, "cd ", 3);
 	if (list) {
+		RListIter *iter;
 		r_list_foreach (list, iter, filename) {
 			if (*filename == '.') {
 				continue;
@@ -1332,7 +1330,7 @@ out:
 }
 
 //TODO: make it recursive to handle nested struct
-static int autocomplete_pfele (RCore *core, RLineCompletion *completion, char *key, char *pfx, int idx, char *ptr) {
+static int autocomplete_pfele(RCore *core, RLineCompletion *completion, char *key, char *pfx, int idx, char *ptr) {
 	int i, ret = 0;
 	int len = strlen (ptr);
 	char* fmt = sdb_get (core->print->formats, key, NULL);
@@ -1416,20 +1414,30 @@ static void autocomplete_project(RCore *core, RLineCompletion *completion, const
 	}
 }
 
+static bool get_alias_keys(void *keylist_in, const void *k, const void *v){
+	RList *keylist = (RList *)keylist_in;
+	return r_list_append (keylist, (char *)k);
+}
+
 static void autocomplete_minus(RCore *core, RLineCompletion *completion, const char *str) {
 	r_return_if_fail (str);
-	int count;
 	int length = strlen (str);
-	char **keys = r_cmd_alias_keys(core->rcmd, &count);
+
+	RList *keys = r_list_new ();
 	if (!keys) {
 		return;
 	}
-	int i;
-	for (i = 0; i < count; i++) {
-		if (!strncmp (keys[i], str, length)) {
-			r_line_completion_push (completion, keys[i]);
+
+	ht_pp_foreach (core->rcmd->aliases, get_alias_keys, keys);
+
+	RListIter *it;
+	r_list_foreach_iter (keys, it) {
+		if (!strncmp (it->data, str, length)) {
+			r_line_completion_push (completion, it->data);
 		}
 	}
+
+	r_list_free (keys);
 }
 
 static void autocomplete_breakpoints(RCore *core, RLineCompletion *completion, const char *str) {
@@ -1820,6 +1828,15 @@ static bool find_autocomplete(RCore *core, RLineCompletion *completion, RLineBuf
 }
 
 R_API void r_core_autocomplete(R_NULLABLE RCore *core, RLineCompletion *completion, RLineBuffer *buf, RLinePromptType prompt_type) {
+	if (r_config_get_b (core->config, "scr.prompt.tabhelp")) {
+		if (buf->data[0] && buf->data[strlen (buf->data) - 1] != ' ' && !strchr (buf->data, ' ')) {
+			r_line_completion_clear (completion);
+			char *s = r_core_cmd_strf (core, "%s?", buf->data);
+			eprintf ("%s%s\n%s", core->cons->line->prompt, buf->data, s);
+			free (s);
+			return;
+		}
+	}
 	if (!core) {
 		autocomplete_default (core, completion, buf);
 		return;
@@ -1945,8 +1962,7 @@ R_API void r_core_autocomplete(R_NULLABLE RCore *core, RLineCompletion *completi
 				}
 			}
 		}
-	} else if (!strncmp (buf->data, "t ", 2)
-	|| !strncmp (buf->data, "t- ", 3)) {
+	} else if (!strncmp (buf->data, "t ", 2) || !strncmp (buf->data, "t- ", 3)) {
 		SdbList *l = sdb_foreach_list (core->anal->sdb_types, true);
 		SdbListIter *iter;
 		SdbKv *kv;
@@ -1976,14 +1992,16 @@ R_API void r_core_autocomplete(R_NULLABLE RCore *core, RLineCompletion *completi
 		}
 		ls_free (l);
 	} else if (!strncmp (buf->data, "$", 1)) {
-		int i;
-		for (i = 0; i < core->rcmd->aliases.count; i++) {
-			const char *key = core->rcmd->aliases.keys[i];
-			int len = strlen (buf->data);
+		RList *keys = r_cmd_alias_keys (core->rcmd);
+		RListIter *it;
+		int len = strlen (buf->data);
+		r_list_foreach_iter (keys, it) {
+			char *key = (char *)it->data;
 			if (!len || !strncmp (buf->data, key, len)) {
 				r_line_completion_push (completion, key);
 			}
 		}
+		r_list_free (keys);
 	} else if (!strncmp (buf->data, "ts ", 3)
 	|| !strncmp (buf->data, "ta ", 3)
 	|| !strncmp (buf->data, "tp ", 3)
@@ -2515,9 +2533,6 @@ static bool r_core_anal_read_at(struct r_anal_t *anal, ut64 addr, ut8 *buf, int 
 	return r_io_read_at (anal->iob.io, addr, buf, len);
 }
 
-static void r_core_break (RCore *core) {
-}
-
 static void *r_core_sleep_begin (RCore *core) {
 	RCoreTask *task = r_core_task_self (&core->tasks);
 	if (task) {
@@ -2559,7 +2574,7 @@ static void __init_autocomplete_default (RCore* core) {
 		"db-", "dbc", "dbC", "dbd", "dbe", "dbs", "dbi", "dbte", "dbtd", "dbts", NULL
 	};
 	const char *files[] = {
-		".", "..", ".*", "/F", "/m", "!", "!!", "#!c", "#!v", "#!cpipe", "#!vala",
+		".", "..", ".*", ":. ", "/F", "/m", "!", "!!", "#!c", "#!v", "#!cpipe", "#!vala", "v.",
 		"#!rust", "#!zig", "#!pipe", "#!python", "aeli", "arp", "arpg", "dmd", "drp", "drpg", "o",
 		"idp", "idpi", "L", "obf", "o+", "oc", "r2", "rabin2", "rasm2", "rahash2", "rax2",
 		"rafind2", "cd", "ls", "on", "op", "wf", "rm", "wF", "wp", "Sd", "Sl", "to", "pm",
@@ -2863,6 +2878,7 @@ R_API bool r_core_init(RCore *core) {
 	core->rasm->num = core->num;
 	r_asm_set_user_ptr (core->rasm, core);
 	core->anal = r_anal_new ();
+	core->anal->print = core->print;
 	r_anal_bind (core->anal, &core->rasm->analb);
 	core->gadgets = r_list_newf ((RListFree)r_core_gadget_free);
 	core->anal->ev = core->ev;
@@ -2995,7 +3011,7 @@ R_API void r_core_bind_cons(RCore *core) {
 	core->cons->num = core->num;
 	core->cons->cb_fkey = (RConsFunctionKey)__cons_cb_fkey;
 	core->cons->cb_editor = (RConsEditorCallback)r_core_editor;
-	core->cons->cb_break = (RConsBreakCallback)r_core_break;
+	core->cons->cb_break = NULL; // (RConsBreakCallback)r_core_break;
 	core->cons->cb_sleep_begin = (RConsSleepBeginCallback)r_core_sleep_begin;
 	core->cons->cb_sleep_end = (RConsSleepEndCallback)r_core_sleep_end;
 	core->cons->cb_task_oneshot = (RConsQueueTaskOneshot) r_core_task_enqueue_oneshot;
@@ -3168,12 +3184,11 @@ static void set_prompt(RCore *r) {
 
 	// TODO: also in visual prompt and disasm/hexdump ?
 	if (r_config_get_i (r->config, "asm.segoff")) {
+		ut32 sb = r_config_get_i (r->config, "anal.cs"); // segment base value
+		ut32 sg = r_config_get_i (r->config, "asm.seggrn"); // segment granurality
 		ut32 a, b;
-		unsigned int seggrn = r_config_get_i (r->config, "asm.seggrn");
-
-		a = ((r->offset >> 16) << (16 - seggrn));
-		b = (r->offset & 0xffff);
-		snprintf (tmp, 128, "%04x:%04x", a, b);
+		r_num_segaddr (r->offset, sb, sg, &a, &b);
+		snprintf (tmp, sizeof (tmp), "%04x:%04x", a, b);
 	} else {
 		char p[64], sec[32];
 		int promptset = false;
@@ -3272,10 +3287,12 @@ R_API int r_core_prompt_exec(RCore *r) {
 		r->rc = r->num->value;
 		// int ret = r_core_cmd (r, cmd, true);
 		free (cmd);
-		if (r->cons && r->cons->use_tts) {
+		if (r->cons && r->cons->context->use_tts) {
 			const char *buf = r_cons_get_buffer ();
-			r_sys_tts (buf, true);
-			r->cons->use_tts = false;
+			if (buf && *buf) {
+				r_sys_tts (buf, true);
+			}
+			r->cons->context->use_tts = false;
 		}
 		r_cons_echo (NULL);
 		r_cons_flush ();
@@ -3708,7 +3725,7 @@ R_API char *r_core_editor(const RCore *core, const char *file, const char *str) 
 	char *name = NULL, *ret = NULL;
 	int fd;
 
-	if (!interactive || !editor || !*editor) {
+	if (!interactive) {
 		return NULL;
 	}
 	bool readonly = false;

@@ -246,7 +246,8 @@ static const char *help_msg_panels[] = {
 	"u/U",      "undo / redo seek",
 	"w",        "shuffle panels around in window mode",
 	"V",        "go to the graph mode",
-	"xX",       "show xrefs/refs of current function from/to data/code",
+	"x",        "show xrefs/refs of current function from/to data/code",
+	"X",        "close current panel",
 	"z",        "swap current panel with the first one",
 	NULL
 };
@@ -286,7 +287,8 @@ static const char *help_msg_panels_zoom[] = {
 	"p/P",      "seek to next or previous scr.nkey",
 	"s/S",      "step in / step over",
 	"t/T",      "rotate related commands in a panel",
-	"xX",       "show xrefs/refs of current function from/to data/code",
+	"x",        "show xrefs/refs of current function from/to data/code",
+	"X",        "close current panel",
 	"q/Q/Enter","quit zoom mode",
 	NULL
 };
@@ -5671,14 +5673,14 @@ static void demo_begin(RCore *core, RConsCanvas *can) {
 		r_str_ansi_filter (s, NULL, NULL, -1);
 		int i, h, w = r_cons_get_size (&h);
 		for (i = 0; i < 40; i+= (1 + (i/30))) {
-			int H = i * ((double)h / 40);
+			int H = (int)(i * ((double)h / 40));
 			char *r = r_str_scale (s, w, H);
 			r_cons_clear00 ();
 			r_cons_gotoxy (0, (h / 2) - (H / 2));
 			r_cons_strcat (r);
 			r_cons_flush ();
 			free (r);
-			r_sys_usleep (3000);
+			r_sys_usleep (5000);
 		}
 		free (s);
 	}

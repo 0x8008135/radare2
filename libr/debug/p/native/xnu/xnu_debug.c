@@ -1,4 +1,4 @@
-/* radare2 - LGPL - Copyright 2015-2019 - pancake, alvaro_fe */
+/* radare2 - LGPL - Copyright 2015-2021 - pancake, alvaro_fe */
 
 #include <r_userconf.h>
 #if DEBUGGER
@@ -65,7 +65,7 @@ typedef struct {
 } DyldImageInfo64;
 
 /* XXX: right now it just returns the first thread, not the one selected in dbg->tid */
-static thread_t getcurthread (RDebug *dbg) {
+static thread_t getcurthread(RDebug *dbg) {
 	thread_t th;
 	thread_array_t threads = NULL;
 	unsigned int n_threads = 0;
@@ -124,8 +124,8 @@ static task_t task_for_pid_workaround(int Pid) {
 	}
 	kr = host_processor_set_priv (myhost, psDefault, &psDefault_control);
 	if (kr != KERN_SUCCESS) {
-		eprintf ("host_processor_set_priv failed with error 0x%x\n", kr);
-		//mach_error ("host_processor_set_priv",kr);
+		eprintf ("host_processor_set_priv failed for pid %d with error 0x%x\n", Pid, kr);
+		// mach_error ("host_processor_set_priv",kr);
 		return -1;
 	}
 
@@ -197,29 +197,31 @@ bool xnu_step(RDebug *dbg) {
 #endif
 }
 
-int xnu_attach(RDebug *dbg, int pid) {
+bool xnu_attach(RDebug *dbg, int pid) {
 #if XNU_USE_PTRACE
-  #if PT_ATTACHEXC
-	if (r_debug_ptrace (dbg, PT_ATTACHEXC, pid, 0, 0) == -1) {
-  #else
-	if (r_debug_ptrace (dbg, PT_ATTACH, pid, 0, 0) == -1) {
-  #endif
+# if PT_ATTACHEXC
+#  define MY_ATTACH PT_ATTACHEXC
+# else
+#  define MY_ATTACH PT_ATTACH
+# endif
+	if (r_debug_ptrace (dbg, MY_ATTACH, pid, 0, 0) == -1) {
 		perror ("ptrace (PT_ATTACH)");
-		return -1;
+		return false;
 	}
-	return pid;
 #else
-	dbg->pid = pid;
-	if (!xnu_create_exception_thread (dbg)) {
+	if (!xnu_create_exception_thread (dbg, pid)) {
 		eprintf ("error setting up exception thread\n");
-		return -1;
+		return false;
 	}
+	dbg->pid = pid;
+	dbg->tid = getcurthread (dbg);
 	xnu_stop (dbg, pid);
-	return pid;
 #endif
+	dbg->pid = pid;
+	return true;
 }
 
-int xnu_detach(RDebug *dbg, int pid) {
+bool xnu_detach(RDebug *dbg, int pid) {
 #if XNU_USE_PTRACE
 	return r_debug_ptrace (dbg, PT_DETACH, pid, NULL, 0);
 #else
@@ -252,7 +254,7 @@ static int task_suspend_count(task_t task) {
 	return info.suspend_count;
 }
 
-int xnu_stop(RDebug *dbg, int pid) {
+bool xnu_stop(RDebug *dbg, int pid) {
 #if XNU_USE_PTRACE
 	eprintf ("xnu_stop: not implemented\n");
 	return false;
@@ -290,7 +292,7 @@ int xnu_stop(RDebug *dbg, int pid) {
 #endif
 }
 
-int xnu_continue(RDebug *dbg, int pid, int tid, int sig) {
+bool xnu_continue(RDebug *dbg, int pid, int tid, int sig) {
 #if XNU_USE_PTRACE
 	void *data = (void*)(size_t)((sig != -1) ? sig : dbg->reason.signum);
 	task_resume (pid_to_task (pid));
@@ -345,7 +347,6 @@ char *xnu_reg_profile(RDebug *dbg) {
 #endif
 }
 
-//r_debug_select
 //using getcurthread has some drawbacks. You lose the ability to select
 //the thread you want to write or read from. but how that feature
 //is not implemented yet i don't care so much
@@ -467,7 +468,7 @@ static int xnu_get_kinfo_proc (int pid, struct kinfo_proc *kp) {
 	return 0;
 }
 
-RDebugInfo *xnu_info (RDebug *dbg, const char *arg) {
+RDebugInfo *xnu_info(RDebug *dbg, const char *arg) {
 	struct kinfo_proc kp; // XXX This need to be freed?
 	int kinfo_proc_error = 0;
 	RDebugInfo *rdi = R_NEW0 (RDebugInfo);
@@ -522,7 +523,7 @@ static void xnu_free_threads_ports (RDebugPid *p) {
 }
 */
 
-RList *xnu_thread_list (RDebug *dbg, int pid, RList *list) {
+RList *xnu_thread_list(RDebug *dbg, int pid, RList *list) {
 #if __arm__ || __arm64__ || __aarch_64__
 	#define CPU_PC (dbg->bits == R_SYS_BITS_64) ? \
 		state.ts_64.__pc : state.ts_32.__pc
@@ -571,12 +572,12 @@ int xnu_map_protect (RDebug *dbg, ut64 addr, int size, int perms) {
 	return true;
 }
 
-task_t pid_to_task (int pid) {
+task_t pid_to_task(int pid) {
 	static int old_pid = -1;
 	kern_return_t kr;
 	task_t task = -1;
 	int err;
-	/* it means that we are done with the task*/
+
 	if (task_dbg != 0 && old_pid == pid) {
 		return task_dbg;
 	}
@@ -590,6 +591,9 @@ task_t pid_to_task (int pid) {
 			//return 0;
 		}
 
+	}
+	if (pid == -1) {
+		pid = old_pid;
 	}
 	err = task_for_pid (mach_task_self (), (pid_t)pid, &task);
 	if ((err != KERN_SUCCESS) || !MACH_PORT_VALID (task)) {
@@ -610,12 +614,14 @@ task_t pid_to_task (int pid) {
 			}
 		}
 	}
-	old_pid = pid;
+	if (pid != -1) {
+		old_pid = pid;
+	}
 	task_dbg = task;
 	return task;
 }
 
-int xnu_get_vmmap_entries_for_pid (pid_t pid) {
+int xnu_get_vmmap_entries_for_pid(pid_t pid) {
 	task_t task = pid_to_task (pid);
 	kern_return_t kr = KERN_SUCCESS;
 	vm_address_t address = 0;
@@ -657,11 +663,11 @@ int xnu_get_vmmap_entries_for_pid (pid_t pid) {
 static void get_mach_header_sizes(size_t *mach_header_sz, 
 									size_t *segment_command_sz) {
 #if __ppc64__ || __x86_64__
-	*mach_header_sz = sizeof(struct mach_header_64);
-	*segment_command_sz = sizeof(struct segment_command_64);
+	*mach_header_sz = sizeof (struct mach_header_64);
+	*segment_command_sz = sizeof (struct segment_command_64);
 #elif __i386__ || __ppc__ || __POWERPC__
-	*mach_header_sz = sizeof(struct mach_header);
-	*segment_command_sz = sizeof(struct segment_command);
+	*mach_header_sz = sizeof (struct mach_header);
+	*segment_command_sz = sizeof (struct segment_command);
 #else
 #endif
 // XXX: What about arm?
@@ -908,6 +914,23 @@ static uid_t uidFromPid(pid_t pid) {
 	return uid;
 }
 
+static uid_t ppidFromPid(pid_t pid) {
+	uid_t ppid = -1;
+
+	struct kinfo_proc process;
+	size_t procBufferSize = sizeof (process);
+
+	// Compose search path for sysctl. Here you can specify PID directly.
+	int path[] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, pid};
+	const int pathLenth = (sizeof (path) / sizeof (int));
+	int sysctlResult = sysctl (path, pathLenth, &process, &procBufferSize, NULL, 0);
+	// If sysctl did not fail and process with PID available - take UID.
+	if ((sysctlResult == 0) && (procBufferSize != 0)) {
+		ppid = process.kp_eproc.e_ppid;
+	}
+	return ppid;
+}
+
 bool xnu_generate_corefile (RDebug *dbg, RBuffer *dest) {
 	int error = 0, i;
 	int tstate_size;
@@ -1090,7 +1113,9 @@ RDebugPid *xnu_get_pid (int pid) {
 		return NULL;
 	}
 #endif
-	return r_debug_pid_new (psname, pid, uid, 's', 0); // XXX 's' ??, 0?? must set correct values
+	RDebugPid *p = r_debug_pid_new (psname, pid, uid, 's', 0); // XXX 's' ??, 0?? must set correct values
+	p->ppid = ppidFromPid (pid);
+	return p;
 }
 
 kern_return_t mach_vm_region_recurse (

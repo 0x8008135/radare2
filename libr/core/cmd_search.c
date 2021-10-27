@@ -14,6 +14,30 @@ static int cmd_search(void *data, const char *input);
 #define AES_SEARCH_LENGTH 40
 #define PRIVATE_KEY_SEARCH_LENGTH 11
 
+static const char *help_msg_search_wide_string[] = {
+	"Usage: /w[ij]", "[str]", "Wide string search subcommands",
+	"/w ", "foo", "search for wide string 'f\\0o\\0o\\0'",
+	"/wj ", "foo", "search for wide string 'f\\0o\\0o\\0' (json output)",
+	"/wi ", "foo", "search for wide string 'f\\0o\\0o\\0' but ignoring case",
+	"/wij ", "foo", "search for wide string 'f\\0o\\0o\\0' but ignoring case (json output)",
+	NULL
+};
+
+static const char *help_msg_search_offset[] = {
+	"Usage: /o", "[n]", "Shows offset of 'n' Backward instruction",
+	NULL
+};
+
+static const char *help_msg_search_offset_without_anal[] = {
+	"Usage: /O", "[n]", "Shows offset of 'n' Backward instruction, but with a different fallback if anal cannot be used.",
+	NULL
+};
+
+static const char *help_msg_search_string_no_case[] = {
+	"Usage: /i", "[str]", "Search str string ignorning case",
+	NULL
+};
+
 static const char *help_msg_search_esil[] = {
 	"/E", " [esil-expr]", "search offsets matching a specific esil expression",
 	"/Ej", " [esil-expr]", "same as above but using the given magic file",
@@ -27,6 +51,28 @@ static const char *help_msg_search_backward[] = {
 	"Usage: /b[p]<command>", "[value]", "Backward search subcommands",
 	"/b", "[x] [str|414243]", "search in hexadecimal 'ABC' backwards starting in current address",
 	"/bp", "", "search previous prelude and set hit.prelude flag",
+	NULL
+};
+
+static const char *help_msg_search_forward[] = {
+	"Usage: /f", " ", "search forwards, command modifier, followed by other command",
+	NULL
+};
+
+static const char *help_msg_search_sections[] = {
+	"Usage: /s[*]", "[threshold]", "finds sections by grouping blocks with similar entropy.",
+	NULL
+};
+
+static const char *help_msg_search_delta[] = {
+	"Usage: /d", "delta", "search for a deltified sequence of bytes.",
+	NULL
+};
+
+static const char *help_msg_search_pattern[] = {
+	"Usage: /p[p]", " [pattern]", "Search for patterns or preludes",
+	"/p", " [hexpattern]", "search in hexpairs pattern in search.in",
+	"/pp", "", "search for function preludes",
 	NULL
 };
 
@@ -56,7 +102,7 @@ static const char *help_msg_slash[] = {
 	"/+", " /bin/sh", "construct the string with chunks",
 	"//", "", "repeat last search",
 	"/a", "[?][1aoditfmsltf] jmp eax", "assemble opcode and search its bytes",
-	"/b", "[p]", "search backwards, command modifier, followed by other command",
+	"/b", "[?][p]", "search backwards, command modifier, followed by other command",
 	"/c", "[?][adr]", "search for crypto materials",
 	"/d", " 101112", "search for a deltified sequence of bytes",
 	"/e", " /E.F/i", "match regular expression",
@@ -70,11 +116,11 @@ static const char *help_msg_slash[] = {
 	"/m", "[?][ebm] magicfile", "search for magic, filesystems or binary headers",
 	"/o", " [n]", "show offset of n instructions backward",
 	"/O", " [n]", "same as /o, but with a different fallback if anal cannot be used",
-	"/p", "[p] patternsize", "search for pattern of given size",
+	"/p", "[?][p] patternsize", "search for pattern of given size",
 	"/P", " patternsize", "search similar blocks",
 	"/s", "[*] [threshold]", "find sections by grouping blocks with similar entropy",
 	"/r[erwx]", "[?] sym.printf", "analyze opcode reference an offset (/re for esil)",
-	"/R", " [grepopcode]", "search for matching ROP gadgets, semicolon-separated",
+	"/R", "[?] [grepopcode]", "search for matching ROP gadgets, semicolon-separated",
 	// moved into /as "/s", "", "search for all syscalls in a region (EXPERIMENTAL)",
 	"/v", "[1248] value", "look for an `cfg.bigendian` 32bit value",
 	"/V", "[1248] min max", "look for an `cfg.bigendian` 32bit value in range",
@@ -123,6 +169,7 @@ static const char *help_msg_slash_c[] = {
 	"Usage: /c", "", "Search for crypto materials",
 	"/ca", "", "Search for AES keys expanded in memory",
 	"/cc", "[algo] [digest]", "Find collisions (bruteforce block length values until given checksum is found)",
+	"/ck", "", "Find well known constant tables from different hash and crypto algorithms",
 	"/cd", "", "Search for ASN1/DER certificates",
 	"/cr", "", "Search for ASN1/DER private keys (RSA and ECC)",
 	"/cg", "", "Search for GPG/PGP keys and signatures (Plaintext and binary form)",
@@ -190,16 +237,6 @@ struct endlist_pair {
 	int instr_offset;
 	int delay_size;
 };
-
-static void cmd_search_init(RCore *core, RCmdDesc *parent) {
-	DEFINE_CMD_DESCRIPTOR_SPECIAL (core, /, slash);
-	DEFINE_CMD_DESCRIPTOR_SPECIAL (core, /a, slash_a);
-	DEFINE_CMD_DESCRIPTOR_SPECIAL (core, /c, slash_c);
-	DEFINE_CMD_DESCRIPTOR_SPECIAL (core, /r, slash_r);
-	DEFINE_CMD_DESCRIPTOR_SPECIAL (core, /R, slash_R);
-	DEFINE_CMD_DESCRIPTOR_SPECIAL (core, /Rk, slash_Rk);
-	DEFINE_CMD_DESCRIPTOR_SPECIAL (core, /x, slash_x);
-}
 
 static int search_hash(RCore *core, const char *hashname, const char *hashstr, ut32 minlen, ut32 maxlen, struct search_parameters *param) {
 	RIOMap *map;
@@ -288,7 +325,7 @@ static void cmd_search_bin(RCore *core, RInterval itv) {
 		if (plug) {
 			r_cons_printf ("0x%08" PFMT64x "  %s\n", from, plug->name);
 			if (plug->size) {
-				RBinOptions opt = {
+				RBinFileOptions opt = {
 					.pluginname = plug->name,
 					.baseaddr = 0,
 					.loadaddr = 0,
@@ -742,40 +779,29 @@ R_API RList *r_core_get_boundaries_prot(RCore *core, R_UNUSED int perm, const ch
 	} else if (!strcmp (mode, "io.maps")) { // Non-overlapping RIOMap parts not overridden by others (skyline)
 		ut64 begin = UT64_MAX;
 		ut64 end = UT64_MAX;
-#define USE_SKYLINE 0
-#if USE_SKYLINE
-		const RPVector *skyline = &core->io->map_skyline;
-		size_t i;
-		for (i = 0; i < r_pvector_len (skyline); i++) {
-			const RIOMapSkyline *part = r_pvector_at (skyline, i);
-		//  	int perm = part->map->perm;
-			ut64 from = r_itv_begin (part->itv);
-			ut64 to = r_itv_end (part->itv);
-			// XXX skyline's fake map perms are wrong
-			RIOMap *m = r_io_map_get_at (core->io, from);
-			int rwx = m? m->perm: part->map->perm;
-#else
-		void **it;
-		r_pvector_foreach (&core->io->maps, it) {
-			RIOMap *map = *it;
-			ut64 from = r_io_map_begin (map);
-			ut64 to = r_io_map_end (map);
-			int rwx = map->perm;
-#endif
-			// eprintf ("--------- %llx %llx    (%llx %llx)\n", from, to, begin, end);
-			if (begin == UT64_MAX) {
-				begin = from;
-			}
-			if (end == UT64_MAX) {
-				end = to;
-			} else {
-				if (end == from) {
+		RIOBank *bank = r_io_bank_get (core->io, core->io->bank);
+		RListIter *iter;
+		RIOMapRef *mapref;
+		if (bank) {
+			r_list_foreach (bank->maprefs, iter, mapref) {
+				RIOMap *map = r_io_map_get_by_ref (core->io, mapref);
+				const ut64 from = r_io_map_begin (map);
+				const ut64 to = r_io_map_end (map);
+				const int rwx = map->perm;
+				if (begin == UT64_MAX) {
+					begin = from;
+				}
+				if (end == UT64_MAX) {
 					end = to;
 				} else {
-					append_bound (list, NULL, search_itv,
-						begin, end - begin, rwx);
-					begin = from;
-					end = to;
+					if (end == from) {
+						end = to;
+					} else {
+						append_bound (list, NULL, search_itv,
+							begin, end - begin, rwx);
+						begin = from;
+						end = to;
+					}
 				}
 			}
 		}
@@ -786,53 +812,19 @@ R_API RList *r_core_get_boundaries_prot(RCore *core, R_UNUSED int perm, const ch
 		int len = strlen ("io.maps.");
 		int mask = (mode[len - 1] == '.')? r_str_rwx (mode + len): 0;
 		// bool only = (bool)(size_t)strstr (mode, ".only");
-
-		void **it;
-		r_pvector_foreach (&core->io->maps, it) {
-			RIOMap *map = *it;
-			ut64 from = r_io_map_begin (map);
-			//ut64 to = r_io_map_end (map);
-			int rwx = map->perm;
-			if ((rwx & mask) != mask) {
-				continue;
-			}
-			append_bound (list, core->io, search_itv, from, r_io_map_size (map), rwx);
-		}
-	} else if (r_str_startswith (mode, "io.sky.")) {
-		int len = strlen ("io.sky.");
-		int mask = (mode[len - 1] == '.')? r_str_rwx (mode + len): 0;
-		bool only = (bool)(size_t)strstr (mode, ".only");
-		RVector *skyline = &core->io->map_skyline.v;
-		ut64 begin = UT64_MAX;
-		ut64 end = UT64_MAX;
-		size_t i;
-		for (i = 0; i < r_vector_len (skyline); i++) {
-			const RSkylineItem *part = r_vector_index_ptr (skyline, i);
-			ut64 from = part->itv.addr;
-			ut64 to = part->itv.addr + part->itv.size;
-			int perm = ((RIOMap *)part->user)->perm;
-			if (maskMatches (perm, mask, only)) {
-				continue;
-			}
-			// eprintf ("--------- %llx %llx    (%llx %llx)\n", from, to, begin, end);
-			if (begin == UT64_MAX) {
-				begin = from;
-			}
-			if (end == UT64_MAX) {
-				end = to;
-			} else {
-				if (end == from) {
-					end = to;
-				} else {
-					// eprintf ("[%llx - %llx]\n", begin, end);
-					append_bound (list, NULL, search_itv, begin, end - begin, perm);
-					begin = from;
-					end = to;
+		RIOBank *bank = r_io_bank_get (core->io, core->io->bank);
+		RListIter *iter;
+		RIOMapRef *mapref;
+		if (bank) {
+			r_list_foreach (bank->maprefs, iter, mapref) {
+				RIOMap *map = r_io_map_get_by_ref (core->io, mapref);
+				const ut64 from = r_io_map_begin (map);
+				const int rwx = map->perm;
+				if ((rwx & mask) != mask) {
+					continue;
 				}
+				append_bound (list, core->io, search_itv, from, r_io_map_size (map), rwx);
 			}
-		}
-		if (end != UT64_MAX) {
-			append_bound (list, NULL, search_itv, begin, end - begin, 7);
 		}
 	} else if (r_str_startswith (mode, "bin.segments")) {
 		int len = strlen ("bin.segments.");
@@ -875,16 +867,19 @@ R_API RList *r_core_get_boundaries_prot(RCore *core, R_UNUSED int perm, const ch
 			}
 			if (from == UT64_MAX) {
 				int mask = 1;
-				void **it;
-				r_pvector_foreach (&core->io->maps, it) {
-					RIOMap *map = *it;
-					ut64 from = r_io_map_begin (map);
-					ut64 size = r_io_map_size (map);
-					int rwx = map->perm;
-					if ((rwx & mask) != mask) {
-						continue;
+				RIOBank *bank = r_io_bank_get (core->io, core->io->bank);
+				RIOMapRef *mapref;
+				if (bank) {
+					r_list_foreach (bank->maprefs, iter, mapref) {
+						RIOMap *map = r_io_map_get_by_ref (core->io, mapref);
+						const ut64 from = r_io_map_begin (map);
+						const ut64 size = r_io_map_size (map);
+						const int rwx = map->perm;
+						if ((rwx & mask) != mask) {
+							continue;
+						}
+						append_bound (list, core->io, search_itv, from, size, rwx);
 					}
-					append_bound (list, core->io, search_itv, from, size, rwx);
 				}
 			}
 			append_bound (list, core->io, search_itv, from, to-from, 1);
@@ -3199,10 +3194,10 @@ static int cmd_search(void *data, const char *input) {
 
 	core->in_search = true;
 	r_flag_space_push (core->flags, "search");
-	const ut64 search_from = r_config_get_i (core->config, "search.from"),
-			search_to = r_config_get_i (core->config, "search.to");
+	const ut64 search_from = r_config_get_i (core->config, "search.from");
+	const ut64 search_to = r_config_get_i (core->config, "search.to");
 	if (search_from > search_to && search_to) {
-		eprintf ("search.from > search.to is not supported\n");
+		eprintf ("Invalid search range where search.from > search.to.\n");
 		ret = false;
 		goto beach;
 	}
@@ -3279,6 +3274,10 @@ reread:
 		}
 		goto reread;
 	case 'o': { // "/o" print the offset of the Previous opcode
+		if (input[1] == '?') {
+			r_core_cmd_help (core, help_msg_search_offset);
+			break;
+		}
 		ut64 addr, n = input[param_offset - 1] ? r_num_math (core->num, input + param_offset) : 1;
 		n = R_ABS((st64)n);
 		if (((st64)n) < 1) {
@@ -3296,6 +3295,10 @@ reread:
 		break;
 	}
 	case 'O': { // "/O" alternative to "/o"
+		if (input[1] == '?') {
+			r_core_cmd_help (core, help_msg_search_offset_without_anal);
+			break;
+		}
 		ut64 addr, n = input[param_offset - 1] ? r_num_math (core->num, input + param_offset) : 1;
 		if (!n) {
 			n = 1;
@@ -3540,6 +3543,51 @@ reread:
 	case 'c': { // "/c"
 		dosearch = true;
 		switch (input[1]) {
+		case 'k': // "/ck"
+			{
+				const bool le = !r_config_get_b (core->config, "cfg.bigendian");
+				RSearchKeyword *kw;
+				r_search_reset (core->search, R_SEARCH_KEYWORD);
+
+				// aes round constant table
+				kw = r_search_keyword_new_hexmask ("01020408102040801b366cc0ab4d9a2f5ebf63c697356ad4b37dfaefc591", NULL); // AES
+				r_search_kw_add (search, kw);
+
+				// base64
+				kw = r_search_keyword_new_str ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", NULL, NULL, false);
+				r_search_kw_add (search, kw);
+
+				// blowfish
+				if (le) {
+					// LE blowfish
+					kw = r_search_keyword_new_hexmask ("886a3f24d308a3852e8a191344737003223809a4d0319f2998fa2e08896c4eece62128457713d038cf6654be6c0ce934b729acc0dd507cc9b5d5843f170947b5", NULL);
+				} else {
+					// BE blowfish
+					kw = r_search_keyword_new_hexmask ("243f6a8885a308d313198a2e03707344a4093822299f31d0082efa98ec4e6c89452821e638d01377be5466cf34e90c6cc0ac29b7c97c50dd3f84d5b5b5470917", NULL);
+				}
+				r_search_kw_add (search, kw);
+
+				// crc32
+				kw = (le)
+					? r_search_keyword_new_hexmask ("00000000963007772c610eeeba51099919c46d078ff46a7035a563e9a395649e3288db0ea4b8dc791ee9d5e088d9d2972b4cb609bd7cb17e072db8e7911dbf90", NULL)
+					: r_search_keyword_new_hexmask ("0000000077073096ee0e612c990951ba076dc419706af48fe963a5359e6495a30edb883279dcb8a4e0d5e91e97d2d98809b64c2b7eb17cbde7b82d0790bf1d91", NULL);
+				r_search_kw_add (search, kw);
+
+				// sha256
+				kw = (le)
+					? r_search_keyword_new_hexmask ("67e6096a85ae67bb72f36e3c3af54fa57f520e518c68059babd9831f19cde05b", NULL)
+					: r_search_keyword_new_hexmask ("6a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19", NULL);
+				r_search_kw_add (search, kw);
+
+				// rc2
+				kw = r_search_keyword_new_hexmask ("d978f9c419ddb5ed28e9fd794aa0d89dc67e37832b76538e624c6488448bfba2", NULL);
+				r_search_kw_add (search, kw);
+
+				// serpent
+				kw = r_search_keyword_new_hexmask ("00204060012141610222426203234363042444640525456506264666072747", NULL);
+				r_search_kw_add (search, kw);
+				break;
+			}
 		case 'c': // "/cc"
 			{
 				ret = false;
@@ -3766,9 +3814,10 @@ reread:
 		r_cons_clear_line (1);
 		break;
 	case 'p': // "/p"
-		if (input[1] == 'p') { // "/pp" -- find next prelude
+		if (input[1] == '?') { // "/pp" -- find next prelude
+			r_core_cmd_help (core, help_msg_search_pattern);
+		} else if (input[1] == 'p') { // "/pp" -- find next prelude
 			__core_cmd_search_backward_prelude (core, false, true);
-			break;
 		} else if (input[param_offset - 1]) {
 			int ps = atoi (input + param_offset);
 			if (ps > 1) {
@@ -3783,8 +3832,8 @@ reread:
 				}
 				break;
 			}
+			eprintf ("Invalid pattern size (must be > 0)\n");
 		}
-		eprintf ("Invalid pattern size (must be > 0)\n");
 		break;
 	case 'P': // "/P"
 		search_similar_pattern (core, atoi (input + 1), &param);
@@ -3897,7 +3946,15 @@ reread:
 		dosearch = true;
 		break;
 	case 'w': // "/w" search wide string, includes ignorecase search functionality (/wi cmd)!
-		if (input[2] ) {
+		if (input[1] == '?') {
+			r_core_cmd_help (core, help_msg_search_wide_string);
+			break;
+		}
+		if (input[2]) {
+			if (input[2] == '?') {
+				r_core_cmd_help (core, help_msg_search_wide_string);
+				break;
+			}
 			if (input[1] == 'j' || input[2] == 'j') {
 				param.outmode = R_MODE_JSON;
 			}
@@ -3942,6 +3999,10 @@ reread:
 			break;
 		}
 	case 'i': // "/i"
+		if (input[1] == '?') {
+			r_core_cmd_help (core, help_msg_search_string_no_case);
+			break;
+		}
 		if (input[param_offset - 1] != ' ') {
 			eprintf ("Missing ' ' after /i\n");
 			ret = false;
@@ -4013,6 +4074,10 @@ reread:
 		do_esil_search (core, &param, input);
 		goto beach;
 	case 'd': // "/d" search delta key
+		if (input[1] == '?') {
+			r_core_cmd_help (core, help_msg_search_delta);
+			break;
+		} 
 		if (input[1]) {
 			r_search_reset (core->search, R_SEARCH_DELTAKEY);
 			r_search_kw_add (core->search,
@@ -4053,6 +4118,10 @@ reread:
 	}
 	break;
 	case 'f': // "/f" forward search
+		if (input[1] == '?') {
+			r_core_cmd_help (core, help_msg_search_forward);
+			break;
+		}
 		if (core->offset) {
 			st64 coff = core->offset;
 			RInterval itv = {core->offset, -coff};
@@ -4166,6 +4235,10 @@ reread:
 		}
 		break;
 	case 's': // "/s"
+		if (input[1] == '?') {
+			r_core_cmd_help (core, help_msg_search_sections);
+			break;
+		}
 		do_section_search (core, &param, input + 1);
 		break;
 	case '+': // "/+"

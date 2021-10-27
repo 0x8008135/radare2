@@ -261,14 +261,14 @@ static int r_line_readchar_utf8(ut8 *s, int slen) {
 
 #if __WINDOWS__
 static int r_line_readchar_win(ut8 *s, int slen) { // this function handle the input in console mode
+	r_sys_backtrace();
 	INPUT_RECORD irInBuf = { { 0 } };
-	BOOL ret, bCtrl = FALSE;
+	BOOL ret;
 	DWORD mode, out;
 	char buf[5] = {0};
-	HANDLE h;
 	void *bed;
 
-	h = GetStdHandle (STD_INPUT_HANDLE);
+	HANDLE h = GetStdHandle (STD_INPUT_HANDLE);
 	DWORD new_mode = I.vtmode == 2 ? ENABLE_VIRTUAL_TERMINAL_INPUT : 0;
 	GetConsoleMode (h, &mode);
 	SetConsoleMode (h, new_mode);
@@ -298,18 +298,16 @@ do_it_again:
 		if (irInBuf.Event.KeyEvent.bKeyDown) {
 			if (irInBuf.Event.KeyEvent.uChar.UnicodeChar) {
 				char *tmp = r_sys_conv_win_to_utf8_l ((PTCHAR)&irInBuf.Event.KeyEvent.uChar, 1);
-				if (!tmp) {
-					return 0;
+				if (tmp) {
+					r_str_ncpy (buf, tmp, sizeof (buf));
+					free (tmp);
 				}
-				strncpy_s (buf, sizeof (buf), tmp, strlen (tmp));
-				free (tmp);
 			} else {
 				int idx = 0;
 				buf[idx++] = 27;
 				buf[idx++] = '['; // Simulate escaping
-				bCtrl = irInBuf.Event.KeyEvent.dwControlKeyState & 8;
-				if (bCtrl) {
-					buf[idx++] = 0x31;
+				if (irInBuf.Event.KeyEvent.dwControlKeyState & 8) {
+					buf[idx++] = '1'; // control key
 				}
 				switch (irInBuf.Event.KeyEvent.wVirtualKeyCode) {
 				case VK_UP: buf[idx++] = 'A'; break;
@@ -329,7 +327,7 @@ do_it_again:
 	if (!buf[0]) {
 		goto do_it_again;
 	}
-	strncpy_s ((char *)s, slen, buf, sizeof (buf));
+	r_str_ncpy ((char *)s, buf, slen);
 	SetConsoleMode (h, mode);
 	return strlen ((char *)s);
 }
@@ -535,25 +533,23 @@ R_API int r_line_hist_load(const char *file) {
 	return true;
 }
 
-R_API int r_line_hist_save(const char *file) {
-	FILE *fd;
-	int i, ret = false;
-	if (!file || !*file) {
-		return false;
-	}
+R_API bool r_line_hist_save(const char *file) {
+	r_return_val_if_fail (file && *file, false);
+	int i;
+	bool ret = false;
 	char *p, *path = r_str_home (file);
-	if (path != NULL) {
+	if (path) {
 		p = (char *) r_str_lastbut (path, R_SYS_DIR[0], NULL);	// TODO: use fs
 		if (p) {
 			*p = 0;
 			if (!r_sys_mkdirp (path)) {
-				eprintf ("could not save history into %s\n", path);
+				eprintf ("Could not save history into %s\n", path);
 				goto end;
 			}
 			*p = R_SYS_DIR[0];
 		}
-		fd = r_sandbox_fopen (path, "w");
-		if (fd != NULL) {
+		FILE *fd = r_sandbox_fopen (path, "w");
+		if (fd) {
 			if (I.history.data) {
 				for (i = 0; i < I.history.index; i++) {
 					fputs (I.history.data[i], fd);
@@ -671,10 +667,7 @@ static void selection_widget_down(int steps) {
 }
 
 static void print_rline_task(void *_core) {
-	RCore *core =(RCore *)_core;
-	if (core->cons->context->color_mode) {
-		r_cons_clear_line (0);
-	}
+	r_cons_clear_line (0);
 	r_cons_printf ("%s%s%s", Color_RESET, I.prompt,  I.buffer.data);
 	r_cons_flush ();
 }
@@ -788,7 +781,7 @@ R_API void r_line_autocomplete(void) {
 				end_word: I.buffer.data + I.buffer.index;
 		int largv0 = strlen (r_str_get (argv[0]));
 		size_t len_t = strlen (t);
-		p[largv0]='\0';
+		p[largv0] = '\0';
 
 		if ((p - I.buffer.data) + largv0 + 1 + len_t < plen) {
 			if (len_t > 0) {
@@ -948,8 +941,8 @@ static void __print_prompt(void) {
                 r_cons_gotoxy (0,  cons->rows);
                 r_cons_flush ();
 	}
+	r_cons_clear_line (0);
 	if (cons->context->color_mode > 0) {
-		r_cons_clear_line (0);
 		printf ("\r%s%s", Color_RESET, I.prompt);
 	} else {
 		printf ("\r%s", I.prompt);
@@ -1494,7 +1487,7 @@ R_API const char *r_line_readline_cb(RLineReadCallback cb, void *user) {
 		case 4:	// ^D
 			if (!I.buffer.data[0]) {/* eof */
 				if (I.echo) {
-					printf ("^D\n");
+					eprintf ("^D\n");
 				}
 				r_cons_set_raw (false);
 				r_cons_break_pop ();
@@ -1633,16 +1626,24 @@ R_API const char *r_line_readline_cb(RLineReadCallback cb, void *user) {
 			break;
 		case 27: // esc-5b-41-00-00 alt/meta key
 #if __WINDOWS__
+			// always skip escape
+			memmove (buf, buf + 1, strlen ((char *)buf));
+#if 0
 			if (I.vtmode != 2) {
-				memmove (buf, buf + 1, strlen (buf));
+				if (buf[1] == '[') {
+					memmove (buf, buf + 2, strlen (buf));
+				} else {
+					memmove (buf, buf + 1, strlen (buf));
+				}
 				if (!buf[0]) {
 					buf[0] = -1;
 				}
 			} else {
-#endif
 				buf[0] = r_cons_readchar_timeout (50);
-#if __WINDOWS__
 			}
+#endif
+#else
+			buf[0] = r_cons_readchar_timeout (50);
 #endif
 			switch (buf[0]) {
 			case 127: // alt+bkspace
@@ -1697,6 +1698,7 @@ R_API const char *r_line_readline_cb(RLineReadCallback cb, void *user) {
 				}
 				break;
 			default:
+#if !__WINDOWS__
 				if (I.vtmode == 2) {
 					buf[1] = r_cons_readchar_timeout (50);
 					if (buf[1] == -1) { // alt+e
@@ -1707,6 +1709,7 @@ R_API const char *r_line_readline_cb(RLineReadCallback cb, void *user) {
 				} else {
 					buf[1] = r_cons_readchar_timeout (50);
 				}
+#endif
 				if (buf[0] == '[') { // [
 					switch (buf[1]) {
 					case '3': // supr or mouse click

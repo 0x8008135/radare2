@@ -117,6 +117,7 @@ R_API RAnal *r_anal_new(void) {
 	anal->sdb_classes_attrs = sdb_ns (anal->sdb_classes, "attrs", 1);
 	anal->zign_path = strdup ("");
 	anal->cb_printf = (PrintfCallback) printf;
+	anal->esil = NULL; // nul on purpose, otherwise many analysisi fail O_O
 	(void)r_anal_pin_init (anal);
 	(void)r_anal_xrefs_init (anal);
 	anal->diff_thbb = R_ANAL_THRESHOLDBB;
@@ -460,6 +461,7 @@ R_API int r_anal_archinfo(RAnal *anal, int query) {
 	switch (query) {
 	case R_ANAL_ARCHINFO_MIN_OP_SIZE:
 	case R_ANAL_ARCHINFO_MAX_OP_SIZE:
+	case R_ANAL_ARCHINFO_INV_OP_SIZE:
 	case R_ANAL_ARCHINFO_ALIGN:
 		if (anal->cur && anal->cur->archinfo) {
 			return anal->cur->archinfo (anal, query);

@@ -1381,6 +1381,24 @@ out:
 	return new_buf;
 }
 
+/* hex-escape unprintable characters in a raw buffer (null-safe) */
+R_API char *r_str_escape_raw(const ut8 *buf, int sz) {
+	r_return_val_if_fail (buf, NULL);
+
+	/* Worst case scenario, we convert every byte to a \xhh escape */
+	char *new_buf = malloc (1 + sz * 4);
+	if (!new_buf) {
+		return NULL;
+	}
+	char *q = new_buf;
+	int i;
+	for (i = 0; i < sz; i++) {
+		r_str_byte_escape ((char *)&buf[i], &q, false, false, true);
+	}
+	*q = '\0';
+	return new_buf;
+}
+
 R_API char *r_str_escape(const char *buf) {
 	return r_str_escape_ (buf, false, true, true, false, true);
 }
@@ -2239,7 +2257,6 @@ R_API bool r_str_char_fullwidth(const char* s, size_t left) {
 		 R_BETWEEN (0xffe0, codepoint, 0xffe6) ||
 		 R_BETWEEN (0x20000, codepoint, 0x2fffd) ||
 		 R_BETWEEN (0x30000, codepoint, 0x3fffd)));
-
 }
 
 /**
@@ -2631,6 +2648,9 @@ R_API const char *r_str_firstbut_escape(const char *s, char ch, const char *but)
 		if (*p == '\\') {
 			p++;
 			if (*p == ch || strchr(but, *p)) {
+				if (!*p) {
+					break;
+				}
 				continue;
 			} else if (!*p) {
 				break;
@@ -3653,6 +3673,10 @@ R_API char *r_str_from_ut64(ut64 val) {
 	if (!str) {
 		return NULL;
 	}
+	while (!*v && i < 8) {
+		v++;
+		i++;
+	}
 	while (i < 8 && *v) {
 		str[i++] = *v++;
 	}
@@ -3662,8 +3686,13 @@ R_API char *r_str_from_ut64(ut64 val) {
 R_API int r_snprintf(char *string, int len, const char *fmt, ...) {
 	va_list ap;
 	va_start (ap, fmt);
-	int ret = vsnprintf (string, len, fmt, ap);
-	string[len - 1] = 0;
+	int ret = 0;
+	if (len > 0) {
+		ret = vsnprintf (string, len, fmt, ap);
+		string[len - 1] = 0;
+	} else {
+		*string = 0;
+	}
 	va_end (ap);
 	return ret;
 }
@@ -3806,11 +3835,11 @@ R_API char *r_str_scale(const char *s, int w, int h) {
 	int curline = -1;
 	char *linetext = (char*)r_str_pad (' ', w);
 	for (i = 0; i < h; i++) {
-		int zoomedline = i * ((float)rows / h);
+		int zoomedline = (int)(i * ((double)rows / h));
 		const char *srcline = r_list_get_n (lines, zoomedline);
 		int cols = strlen (srcline);
 		for (j = 0; j < w; j++) {
-			int zoomedcol = j * ( (float)cols / w);
+			int zoomedcol = (int)(j * ( (double)cols / w));
 			linetext[j] = srcline[zoomedcol];
 		}
 		if (curline != zoomedline) {

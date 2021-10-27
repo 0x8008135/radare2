@@ -74,10 +74,10 @@ static ut32 __approximate_rgb(int r, int g, int b) {
 	b &= 0xff;
 	return (ut32)((G * M * M)  + (g * M) + b) + 16;
 #else
-	const int k = (256.0 / 6);
-	r = R_DIM (r / k, 0, 6);
-	g = R_DIM (g / k, 0, 6);
-	b = R_DIM (b / k, 0, 6);
+	const int k = (int)(256.0 / 6);
+	r = R_DIM ((int)(r / k), 0, 6);
+	g = R_DIM ((int)(g / k), 0, 6);
+	b = R_DIM ((b / k), 0, 6);
 	return 16 + (r * 36) + (g * 6) + b;
 #endif
 }
@@ -307,7 +307,7 @@ R_API char *r_cons_rgb_str_mode(RConsColorMode mode, char *outstr, size_t sz, RC
 
 /* Return the computed color string for the specified color */
 R_API char *r_cons_rgb_str(char *outstr, size_t sz, RColor *rcolor) {
-	return r_cons_rgb_str_mode (r_cons_singleton ()->context->color_mode, outstr, sz, rcolor);
+	return r_cons_rgb_str_mode (r_cons_context ()->color_mode, outstr, sz, rcolor);
 }
 
 R_API char *r_cons_rgb_tostring(ut8 r, ut8 g, ut8 b) {

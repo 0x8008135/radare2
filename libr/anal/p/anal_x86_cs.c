@@ -383,15 +383,29 @@ static const char *reg32_to_name(ut8 reg) {
 }
 
 static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len, csh *handle, cs_insn *insn) {
-	int rs = a->bits/8;
-	const char *pc = (a->bits==16)?"ip":
-		(a->bits==32)?"eip":"rip";
-	const char *sp = (a->bits==16)?"sp":
-		(a->bits==32)?"esp":"rsp";
-	const char *bp = (a->bits==16)?"bp":
-		(a->bits==32)?"ebp":"rbp";
-	const char *si = (a->bits==16)?"si":
-		(a->bits==32)?"esi":"rsi";
+	int rs = a->bits / 8;
+	const char *pc, *sp, *bp, *si;
+	switch (a->bits) {
+	case 16:
+		pc = "ip";
+		sp = "sp";
+		bp = "bp";
+		si = "si";
+		break;
+	case 32:
+		pc = "eip";
+		sp = "esp";
+		bp = "ebp";
+		si = "esi";
+		break;
+	// case 64:
+	default:
+		pc = "rip";
+		sp = "rsp";
+		bp = "rbp";
+		si = "rsi";
+		break;
+	}
 	struct Getarg gop = {
 		.handle = *handle,
 		.insn = insn,
@@ -1079,9 +1093,16 @@ static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len,
 		}
 		break;
 	case X86_INS_ENTER:
+		{
+			dst = getarg (&gop, 0, 0, NULL, DST_AR, NULL);
+			esilprintf (op, "%s,%d,%s,-,=[%d],%d,%s,-=",
+				r_str_get_fail (dst, "eax"), rs, sp, rs, rs, sp);
+		}
+		break;
 	case X86_INS_PUSH:
 		{
 			dst = getarg (&gop, 0, 0, NULL, DST_AR, NULL);
+			rs = INSOP(0).size;
 			esilprintf (op, "%s,%d,%s,-,=[%d],%d,%s,-=",
 				r_str_get_fail (dst, "eax"), rs, sp, rs, rs, sp);
 		}
@@ -1135,6 +1156,7 @@ static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len,
 			default:
 				{
 					dst = getarg (&gop, 0, 0, NULL, DST_AR, NULL);
+					rs = INSOP(0).size;
 					esilprintf (op,
 						"%s,[%d],%s,=,%d,%s,+=",
 						sp, rs, dst, rs, sp);
@@ -1304,9 +1326,9 @@ static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len,
 			esilprintf (op,
 					"%s,%s,"
 					"%d,%s,-=,%s,"
-					"=[],"
+					"=[%d],"
 					"%s,=",
-					arg0, pc, rs, sp, sp, pc);
+					arg0, pc, rs, sp, sp, rs, pc);
 		}
 		break;
 	case X86_INS_LCALL:
@@ -1316,15 +1338,15 @@ static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len,
 			if (arg1) {
 				esilprintf (op,
 						"2,%s,-=,cs,%s,=[2],"	// push CS
-						"%d,%s,-=,%s,%s,=[],"	// push IP/EIP
+						"%d,%s,-=,%s,%s,=[%d],"	// push IP/EIP
 						"%s,cs,=,"		// set CS
 						"%s,%s,=",		// set IP/EIP
-						sp, sp, rs, sp, pc, sp, arg0, arg1, pc);
+						sp, sp, rs, sp, pc, sp, rs, arg0, arg1, pc);
 			} else {
 				esilprintf (op,
-						"%s,%s,-=,%d,%s,=[],"	// push IP/EIP
+						"%s,%s,-=,%d,%s,=[%d],"	// push IP/EIP
 						"%s,%s,=",		// set IP/EIP
-						sp, sp, rs, sp, arg0, pc);
+						sp, sp, rs, sp, rs, arg0, pc);
 			}
 		}
 		break;
@@ -1359,7 +1381,7 @@ static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len,
 					if (in.mem.segment != X86_REG_INVALID) {
 						esilprintf (
 							op,
-							"4,%s,<<,0x%"PFMT64x",+,[],%s,=",
+							"4,%s,<<,0x%"PFMT64x",+,[%d],%s,=",
 							INSOP(0).mem.segment == X86_REG_ES ? "es"
 							: INSOP(0).mem.segment == X86_REG_CS ? "cs"
 							: INSOP(0).mem.segment == X86_REG_DS ? "ds"
@@ -1368,12 +1390,12 @@ static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len,
 							: INSOP(0).mem.segment == X86_REG_SS ? "ss"
 							: "unknown_segment_register",
 							(ut64)INSOP(0).mem.disp,
-							pc);
+							rs, pc);
 					} else {
 						esilprintf (
 							op,
-							"0x%"PFMT64x",[],%s,=",
-							(ut64)INSOP(0).mem.disp, pc);
+							"0x%"PFMT64x",[%d],%s,=",
+							(ut64)INSOP(0).mem.disp, rs, pc);
 					}
 				}
 			}
@@ -1813,7 +1835,9 @@ static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len,
 		{
 			dst = getarg (&gop, 0, 0, NULL, DST_AR, NULL);
 			src = getarg (&gop, 1, 0, NULL, SRC_AR, NULL);
-			if (INSOP(0).type == X86_OP_MEM) {
+			if (!strcmp (src, dst)) {
+				esilprintf (op, ",");
+			} else if (INSOP(0).type == X86_OP_MEM) {
 				dst2 = getarg (&gop, 0, 1, NULL, DST2_AR, NULL);
 				esilprintf (op,
 					"%s,%s,^,%s,=,"
@@ -3444,6 +3468,7 @@ static char *get_reg_profile(RAnal *anal) {
 		"=PC	ip\n"
 		"=SP	sp\n"
 		"=BP	bp\n"
+		"=R0	ax\n"
 		"=A0	ax\n"
 		"=A1	bx\n"
 		"=A2	cx\n"
@@ -3496,6 +3521,7 @@ static char *get_reg_profile(RAnal *anal) {
 		break;
 	case 32: p =
 		"=PC	eip\n"
+		"=R0	eax\n"
 		"=SP	esp\n"
 		"=BP	ebp\n"
 		"=A0	eax\n"
@@ -3609,6 +3635,7 @@ static char *get_reg_profile(RAnal *anal) {
 		"# RSP     stack pointer\n"
 		 "=PC	rip\n"
 		 "=SP	rsp\n"
+		 "=R0	rax\n"
 		 "=BP	rbp\n"
 		 "=A0	rcx\n"
 		 "=A1	rdx\n"
@@ -3872,6 +3899,8 @@ static int archinfo(RAnal *anal, int q) {
 		return 0;
 	case R_ANAL_ARCHINFO_MAX_OP_SIZE:
 		return 16;
+	case R_ANAL_ARCHINFO_INV_OP_SIZE:
+		return 1;
 	case R_ANAL_ARCHINFO_MIN_OP_SIZE:
 		return 1;
 	}

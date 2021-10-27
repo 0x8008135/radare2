@@ -174,8 +174,7 @@ static bool is_wordable_section(const char *name) {
 static RList* sections(RBinFile *bf) {
 	struct Elf_(r_bin_elf_obj_t)* obj = (bf && bf->o)? bf->o->bin_obj : NULL;
 	struct r_bin_elf_section_t *section = NULL;
-	int i, num, found_load = 0;
-	Elf_(Phdr)* phdr = NULL;
+	int i, found_load = 0;
 	RBinSection *ptr = NULL;
 	RList *ret = NULL;
 
@@ -221,9 +220,11 @@ static RList* sections(RBinFile *bf) {
 
 	// program headers is another section
 	ut16 mach = obj->ehdr.e_machine;
-	num = obj->ehdr.e_phnum;
-	phdr = obj->phdr;
+	Elf_(Phdr)* phdr = obj->phdr;
+
+
 	if (phdr) {
+		ut64 num = Elf_(r_bin_elf_get_phnum) (obj);
 		int n = 0;
 		for (i = 0; i < num; i++) {
 			if (!(ptr = R_NEW0 (RBinSection))) {
@@ -612,16 +613,16 @@ static RBinReloc *reloc_convert(struct Elf_(r_bin_elf_obj_t) *bin, RBinElfReloc 
 	case EM_386: switch (rel->type) {
 		case R_386_NONE:     break; // malloc then free. meh. then again, there's no real world use for _NONE.
 		case R_386_32:       ADD(32, 0);
-		case R_386_PC32:     ADD(32,-P);
+		case R_386_PC32:     ADD(32,-(st64)P);
 		case R_386_GLOB_DAT: SET(32);
 		case R_386_JMP_SLOT: SET(32);
 		case R_386_RELATIVE: ADD(32, B);
-		case R_386_GOTOFF:   ADD(32, -got_addr);
+		case R_386_GOTOFF:   ADD(32, -(st64)got_addr);
 		case R_386_GOTPC:    ADD(32, got_addr - P);
 		case R_386_16:       ADD(16, 0);
-		case R_386_PC16:     ADD(16,-P);
+		case R_386_PC16:     ADD(16,-(st64)P);
 		case R_386_8:        ADD(8,  0);
-		case R_386_PC8:      ADD(8, -P);
+		case R_386_PC8:      ADD(8, -(st64)P);
 		case R_386_COPY:     ADD(32, 0); // XXX: copy symbol at runtime
 		case R_386_IRELATIVE: r->is_ifunc = true; SET(32);
 		default: break;
@@ -630,19 +631,19 @@ static RBinReloc *reloc_convert(struct Elf_(r_bin_elf_obj_t) *bin, RBinElfReloc 
 	case EM_X86_64: switch (rel->type) {
 		case R_X86_64_NONE:	break; // malloc then free. meh. then again, there's no real world use for _NONE.
 		case R_X86_64_64:	ADD(64, 0);
-		case R_X86_64_PLT32:	ADD(32,-P /* +L */);
+		case R_X86_64_PLT32:	ADD(32,-(st64)P /* +L */);
 		case R_X86_64_GOT32:	ADD(32, got_addr);
-		case R_X86_64_PC32:	ADD(32,-P);
+		case R_X86_64_PC32:	ADD(32,-(st64)P);
 		case R_X86_64_GLOB_DAT: r->vaddr -= rel->sto; SET(64);
 		case R_X86_64_JUMP_SLOT: r->vaddr -= rel->sto; SET(64);
 		case R_X86_64_RELATIVE:	ADD(64, B);
 		case R_X86_64_32:	ADD(32, 0);
 		case R_X86_64_32S:	ADD(32, 0);
 		case R_X86_64_16:	ADD(16, 0);
-		case R_X86_64_PC16:	ADD(16,-P);
+		case R_X86_64_PC16:	ADD(16,-(st64)P);
 		case R_X86_64_8:	ADD(8,  0);
-		case R_X86_64_PC8:	ADD(8, -P);
-		case R_X86_64_GOTPCREL:	ADD(64, got_addr-P);
+		case R_X86_64_PC8:	ADD(8, -(st64)P);
+		case R_X86_64_GOTPCREL:	ADD(64, got_addr - P);
 		case R_X86_64_COPY:	ADD(64, 0); // XXX: copy symbol at runtime
 		case R_X86_64_IRELATIVE: r->is_ifunc = true; SET(64);
 		default: break;
@@ -652,14 +653,14 @@ static RBinReloc *reloc_convert(struct Elf_(r_bin_elf_obj_t) *bin, RBinElfReloc 
 		switch (rel->type) {
 		case R_ARM_NONE:	break;
 		case R_ARM_ABS32:	ADD(32, 0);
-		case R_ARM_REL32:	ADD(32,-P);
+		case R_ARM_REL32:	ADD(32,-(st64)P);
 		case R_ARM_ABS16:	ADD(16, 0);
 		case R_ARM_ABS8:	ADD(8,  0);
-		case R_ARM_SBREL32:	ADD(32, -B);
+		case R_ARM_SBREL32:	ADD(32, -(st64)B);
 		case R_ARM_GLOB_DAT:	ADD(32, 0);
 		case R_ARM_JUMP_SLOT:	ADD(32, 0);
 		case R_ARM_RELATIVE:	ADD(32, B);
-		case R_ARM_GOTOFF:	ADD(32,-got_addr);
+		case R_ARM_GOTOFF:	ADD(32,-(st64)got_addr);
 		default: ADD(32, got_addr); break; // reg relocations
 		}
 		break;
@@ -914,11 +915,13 @@ static RList* patch_relocs(RBin *b) {
 	if (size == 0) {
 		return NULL;
 	}
-	void **it;
-	r_pvector_foreach (&io->maps, it) {
-		RIOMap *map = *it;
-		if (r_io_map_begin (map) > offset) {
-			offset = r_io_map_begin (map);
+	RIOBank *bank = b->iob.bank_get (io, io->bank);
+	RListIter *iter;
+	RIOMapRef *mapref;
+	r_list_foreach (bank->maprefs, iter, mapref) {
+		RIOMap *map = b->iob.map_get (io, mapref->id);
+		if (r_io_map_from (map) > offset) {
+			offset = r_io_map_from (map);
 			g = map;
 		}
 	}

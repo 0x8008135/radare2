@@ -22,6 +22,7 @@ if get_option('nogpl')
   user_plugins += ['nogrub']
 endif
 
+
 # This must be splitted in meson.builds for each module
 # meson split is results in 1 empty element when splitting an empty string :facepalm:
 if not no_user_plugins
@@ -128,7 +129,7 @@ anal_plugins += [
   '6502',
   '8051',
   'amd29k',
-  'arc',
+  #'arc',
   'arm_cs',
   'avr',
   'bf',
@@ -171,14 +172,14 @@ anal_plugins += [
   'x86_cs',
   'xap',
   'xcore_cs',
-  'xtensa',
+#  'xtensa',
 ]
 
 asm_plugins += [
   '6502',
   '8051',
   'amd29k',
-  'arc',
+#  'arc',
   'arm_as',
   'arm_cs',
   'arm_winedbg',
@@ -230,7 +231,7 @@ asm_plugins += [
   'x86_nz',
   'xap',
   'xcore_cs',
-  'xtensa',
+#  'xtensa',
 ]
 
 if no_user_plugins
@@ -239,7 +240,8 @@ if no_user_plugins
       'z80',
       'arm_gnu',
       'cris_gnu',
-      'hppa_gnu',
+  #    'hppa_gnu',
+      'm68k_gnu',
       'lanai_gnu',
       'mips_gnu',
       'ppc_gnu',
@@ -257,6 +259,9 @@ if no_user_plugins
   endif
 endif
 
+if get_option('use_v35')
+  anal_plugins += ['arm_v35']
+endif
 
 bin_plugins += [
   'art',
@@ -338,6 +343,7 @@ core_plugins += [
 crypto_plugins += [
   'aes',
   'aes_cbc',
+  'aes_wrap',
   'base64',
   'base91',
   'blowfish',
@@ -479,7 +485,6 @@ include_files = [
   'include/r_getopt.h',
   'include/r_bin_dwarf.h',
   'include/r_bin.h',
-  'include/r_binheap.h',
   'include/r_bp.h',
   'include/r_cmd.h',
   'include/r_config.h',
@@ -548,6 +553,7 @@ r_util_files = [
   'include/r_util/r_log.h',
   'include/r_util/r_mem.h',
   'include/r_util/r_name.h',
+  'include/r_util/r_new_rbtree.h',
   'include/r_util/r_num.h',
   'include/r_util/r_panels.h',
   'include/r_util/r_table.h',
@@ -577,6 +583,7 @@ r_util_files = [
   'include/r_util/r_utf16.h',
   'include/r_util/r_utf32.h',
   'include/r_util/r_utf8.h',
+  'include/r_util/r_w32dw.h',
   'include/r_util/r_x509.h'
 ]
 install_headers(r_util_files, install_dir: join_paths(r2_incdir, 'r_util'))

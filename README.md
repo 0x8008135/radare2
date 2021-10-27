@@ -2,9 +2,9 @@
 
 ## Radare2: Unix-Like Reverse Engineering Framework
 
-[![Tests Status](https://github.com/radareorg/radare2/workflows/CI/badge.svg?branch=master)](https://github.com/radareorg/radare2/actions/workflows/ci.yml?query=branch%3Amaster) [![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/741/badge)](https://bestpractices.coreinfrastructure.org/projects/741) [![Build Status](https://scan.coverity.com/projects/416/badge.svg)](https://scan.coverity.com/projects/416) [![Total alerts](https://img.shields.io/lgtm/alerts/g/radareorg/radare2.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/radareorg/radare2/alerts/)
+[![Tests Status](https://github.com/radareorg/radare2/workflows/CI/badge.svg?branch=master)](https://github.com/radareorg/radare2/actions/workflows/ci.yml?query=branch%3Amaster) [![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/741/badge)](https://bestpractices.coreinfrastructure.org/projects/741) [![Build Status](https://scan.coverity.com/projects/416/badge.svg)](https://scan.coverity.com/projects/416) [![Total alerts](https://img.shields.io/lgtm/alerts/g/radareorg/radare2.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/radareorg/radare2/alerts/) [![TODO counter](https://img.shields.io/github/search/radareorg/radare2/TODO.svg)](https://github.com/radareorg/radare2/search?q=TODO) [![XXX counter](https://img.shields.io/github/search/radareorg/radare2/XXX.svg)](https://github.com/radareorg/radare2/search?q=XXX)
 
-Next release will be 5.4.0 and the [![latest packaged version(s)](https://repology.org/badge/latest-versions/radare2.svg)](https://repology.org/project/radare2/versions) See the [Release](https://github.com/radareorg/radare2/releases) downloads page.
+Next release will be 5.5.0, current git is 5.4.3 and the [![latest packaged version(s)](https://repology.org/badge/latest-versions/radare2.svg)](https://repology.org/project/radare2/versions) See the [Release](https://github.com/radareorg/radare2/releases) downloads page.
 
 r2 is a rewrite from scratch of radare. It provies a set of libraries, tools and
 plugins to ease reverse engineering tasks.
@@ -44,6 +44,7 @@ r2pm install [pkg]   # installs the package
 
 Some of the most installed packages are:
 
+* [radius](https://github.com/aemmitt-ns/radius) fast symbolic execution engine based on boolector and r2
 * [r2ghidra](https://github.com/radareorg/r2ghidra) the native ghidra decompiler plugin: `pdg` command
 * [esilsolve](https://github.com/radareorg/esilsolve) symbolic execution r2 plugin based on esil and z3
 * [r2dec](https://github.com/wargio/r2dec-js) decompiler based on r2 written in js `pdd`
@@ -53,7 +54,7 @@ Some of the most installed packages are:
 ## Operating Systems
 
 Windows (since XP), Linux, Darwin, GNU/Hurd, Apple's {Mac,i,iPad,watch}OS, Android
-[Dragonfly, Net, Free, Open] BSD, Z/OS, QNX, Solaris, Haiku, FirefoxOS.
+[Dragonfly, Net, Free, Open] BSD, Z/OS, QNX, SerenityOS, Solaris, Haiku, Vinix, FirefoxOS.
 
 ## Architectures
 
@@ -70,7 +71,7 @@ MCORE, mcs96, RSP, SuperH-4, VAX, AMD Am29000.
 ELF, Mach-O, Fatmach-O, PE, PE+, MZ, COFF, OMF, TE, XBE, BIOS/UEFI,
 Dyldcache, DEX, ART, CGC, Java class, Android boot image, Plan9 executable,
 ZIMG, MBN/SBL bootloader, ELF coredump, MDMP (Windows minidump),
-WASM (WebAssembly binary), Commodore VICE emulator, QNX, WAD, OFF,
+WASM (WebAssembly binary), Commodore VICE emulator, QNX, WAD, OFF, TIC-80
 Game Boy (Advance), Nintendo DS ROMs and Nintendo 3DS FIRMs, various filesystems.
 
 # Contributing

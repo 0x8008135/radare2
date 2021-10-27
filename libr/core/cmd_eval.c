@@ -1,4 +1,4 @@
-/* radare2 - LGPL - Copyright 2009-2020 - pancake */
+/* radare2 - LGPL - Copyright 2009-2021 - pancake */
 
 #include <stddef.h>
 #include <stdbool.h>
@@ -17,7 +17,7 @@ static const char *help_msg_e[] = {
 	"e-", "", "reset config vars",
 	"e*", "", "dump config vars in r commands",
 	"e!", "a", "invert the boolean value of 'a' var",
-	"ec", " [k] [color]", "set color for given key (prompt, offset, ...)",
+	"ec", "[?] [k] [color]", "set color for given key (prompt, offset, ...)",
 	"ee", "var", "open editor to change the value of var",
 	"ed", "", "open editor to change the ~/.radare2rc",
 	"ej", "", "list config vars in JSON",
@@ -42,7 +42,7 @@ static const char *help_msg_ec[] = {
 	"eco", " [theme]", "load theme if provided (list available themes if not)",
 	"ecp", "", "load previous color theme",
 	"ecn", "", "load next color theme",
-	"ecH", " [?]", "highlight word or instruction",
+	"ecH", "[?]", "highlight word or instruction",
 	"ec", " prompt red", "change color of prompt",
 	"ec", " prompt red blue", "change color and background of prompt",
 	"Vars:", "", "",
@@ -65,11 +65,6 @@ static const char *help_msg_eco[] = {
 };
 
 static bool getNext = false;
-
-static void cmd_eval_init(RCore *core, RCmdDesc *parent) {
-	DEFINE_CMD_DESCRIPTOR (core, e);
-	DEFINE_CMD_DESCRIPTOR (core, ec);
-}
 
 static bool load_theme(RCore *core, const char *path) {
 	if (!r_file_exists (path)) {
@@ -357,7 +352,7 @@ static int cmd_eval(void *data, const char *input) {
 			eprintf ("Usage: et [varname]  ; show type of eval var\n");
 		}
 		break;
-	case 'n': // "en"
+	case 'n': // "en" "env"
 		if (!strchr (input, '=')) {
 			char *var, *p;
 			var = strchr (input, ' ');
@@ -375,12 +370,19 @@ static int cmd_eval(void *data, const char *input) {
 			}
 		} else if (strlen (input) > 3) {
 			char *v, *k = strdup (input + 3);
-			if (!k) break;
+			if (!k) {
+				break;
+			}
 			v = strchr (k, '=');
-			if (v) {
+			if (*k && v) {
 				*v++ = 0;
 				r_str_trim (k);
 				r_str_trim (v);
+				char *last = k + strlen (k) - 1;
+				if (*last == '%') {
+					*last = 0;
+					r_str_trim (k);
+				}
 				r_sys_setenv (k, v);
 			}
 			free (k);

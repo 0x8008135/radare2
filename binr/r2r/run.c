@@ -2,6 +2,18 @@
 
 #include "r2r.h"
 
+#if __wasi__
+static int pipe(int fildes[2]) {return -1;}
+static int dup2(int a, int b) {return -1;}
+static int waitpid(int a, void *b, int c) {return -1;}
+static int kill(int a, int b) {return -1;}
+static int execvp(const char *a, char **b) {return -1;}
+#define WNOHANG 0
+#define WIFEXITED(x) 0
+#define WEXITSTATUS(x) 0
+#define __SIG_IGN 0
+#endif
+
 #if __WINDOWS__
 struct r2r_subprocess_t {
 	HANDLE stdin_write;
@@ -394,7 +406,7 @@ struct r2r_subprocess_t {
 };
 
 static RPVector subprocs;
-static RThreadLock *subprocs_mutex;
+static RThreadLock *subprocs_mutex = NULL;
 static int sigchld_pipe[2];
 static RThread *sigchld_thread;
 
@@ -432,15 +444,13 @@ static RThreadFunctionRet sigchld_th(RThread *th) {
 				R2RSubprocess *p = *it;
 				if (p->pid == pid) {
 					proc = p;
-					r_th_lock_leave (subprocs_mutex);
 					break;
 				}
 			}
 			if (!proc) {
-				r_th_lock_leave (subprocs_mutex);
+			 	r_th_lock_leave (subprocs_mutex);
 				continue;
 			}
-
 			if (WIFEXITED (wstat)) {
 				proc->ret = WEXITSTATUS (wstat);
 			} else {
@@ -448,15 +458,17 @@ static RThreadFunctionRet sigchld_th(RThread *th) {
 			}
 			ut8 r = 0;
 			if (write (proc->killpipe[1], &r, 1) != 1) {
+				r_th_lock_leave (subprocs_mutex);
 				break;
 			}
+			r_th_lock_leave (subprocs_mutex);
 		}
 	}
 	return R_TH_STOP;
 }
 
 R_API bool r2r_subprocess_init(void) {
-	r_pvector_init(&subprocs, NULL);
+	r_pvector_init (&subprocs, NULL);
 	subprocs_mutex = r_th_lock_new (false);
 	if (!subprocs_mutex) {
 		return false;
@@ -905,14 +917,20 @@ static R2RProcessOutput *run_r2_test(R2RRunConfig *config, ut64 timeout_ms, cons
 
 R_API R2RProcessOutput *r2r_run_cmd_test(R2RRunConfig *config, R2RCmdTest *test, R2RCmdRunner runner, void *user) {
 	RList *extra_args = test->args.value ? r_str_split_duplist (test->args.value, " ", true) : NULL;
-	RList *files = r_str_split_duplist (test->file.value, "\n", true);
+	RList *files = test->file.value? r_str_split_duplist (test->file.value, "\n", true): NULL;
 	RListIter *it;
 	RListIter *tmpit;
 	char *token;
-	r_list_foreach_safe (extra_args, it, tmpit, token) {
-		if (!*token) {
-			r_list_delete (extra_args, it);
+	if (extra_args) {
+		r_list_foreach_safe (extra_args, it, tmpit, token) {
+			if (!*token) {
+				r_list_delete (extra_args, it);
+			}
 		}
+	}
+	if (!files) {
+		files = r_list_newf (free);
+		r_list_append (files, strdup ("-"));
 	}
 	r_list_foreach_safe (files, it, tmpit, token) {
 		if (!*token) {
@@ -1110,7 +1128,7 @@ R_API bool r2r_check_asm_test(R2RAsmTestOutput *out, R2RAsmTest *test) {
 		if (!out->bytes || !test->bytes || out->bytes_size != test->bytes_size || out->as_timeout) {
 			return false;
 		}
-		if (memcmp (out->bytes, test->bytes, test->bytes_size) != 0) {
+		if (memcmp (out->bytes, test->bytes, test->bytes_size)) {
 			return false;
 		}
 	}
@@ -1118,7 +1136,7 @@ R_API bool r2r_check_asm_test(R2RAsmTestOutput *out, R2RAsmTest *test) {
 		if (!out->disasm || !test->disasm || out->as_timeout) {
 			return false;
 		}
-		if (strcmp (out->disasm, test->disasm) != 0) {
+		if (strcmp (out->disasm, test->disasm)) {
 			return false;
 		}
 	}
@@ -1210,9 +1228,18 @@ R_API R2RTestResultInfo *r2r_run_test(R2RRunConfig *config, R2RTest *test) {
 			success = true;
 			ret->run_failed = false;
 		} else {
-			R2RAsmTest *asm_test = test->asm_test;
-			R2RAsmTestOutput *out = r2r_run_asm_test (config, asm_test);
-			success = r2r_check_asm_test (out, asm_test);
+			R2RAsmTest *at = test->asm_test;
+			R2RAsmTestOutput *out = r2r_run_asm_test (config, at);
+			success = r2r_check_asm_test (out, at);
+			if (!success) {
+				eprintf ("\n[rasm2:error] code: %s vs %s\n", at->disasm, out->disasm);
+				char *b0 = r_hex_bin2strdup (at->bytes, at->bytes_size);
+				char *b1 = r_hex_bin2strdup (out->bytes, out->bytes_size);
+				eprintf ("[rasm2:error] data: %s vs %s\n", b0, b1);
+				free (b0);
+				free (b1);
+			}
+			// TODO: show more details of the failed assembled instruction
 			ret->asm_out = out;
 			ret->timeout = out->as_timeout || out->disas_timeout;
 			ret->run_failed = !out;

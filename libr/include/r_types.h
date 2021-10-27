@@ -88,6 +88,8 @@
 #define TARGET_OS_IPHONE 0
 #endif
 
+#undef LIBC_HAVE_SYSTEM
+#undef HAVE_SYSTEM
 #if __IPHONE_8_0 && TARGET_OS_IPHONE && !defined(MAC_OS_VERSION_11_0)
 #define LIBC_HAVE_SYSTEM 0
 #define HAVE_SYSTEM 0
@@ -155,7 +157,26 @@
 # define __UNIX__ 1
 #endif
 
-#if defined(EMSCRIPTEN) || defined(__wasi__) || defined(__linux__) || defined(__APPLE__) || defined(__GNU__) || defined(__ANDROID__) || defined(__QNX__) || defined(__sun) || defined(__HAIKU__) || defined(__serenity__)
+#if 0
+// XXX any non-unix system dont have termios :? android?
+#if __linux__ ||  __APPLE__ || __OpenBSD__ || __FreeBSD__ || __NetBSD__ || __DragonFly__ || __HAIKU__ || __serenity__ || __vinix__
+#define HAVE_PTY 1
+#else
+#define HAVE_PTY 0
+#endif
+#endif
+
+#undef HAVE_PTY
+#if EMSCRIPTEN || __wasi__ || defined(__serenity__)
+#define HAVE_PTY 0
+#else
+// #define HAVE_PTY __UNIX__ && !__ANDROID__ && LIBC_HAVE_FORK && !__sun
+#define HAVE_PTY __UNIX__ && LIBC_HAVE_FORK && !__sun
+#endif
+
+
+
+#if defined(EMSCRIPTEN) || defined(__wasi__) || defined(__linux__) || defined(__APPLE__) || defined(__GNU__) || defined(__ANDROID__) || defined(__QNX__) || defined(__sun) || defined(__HAIKU__) || defined(__serenity__) || defined(__vinix__)
   #define __BSD__ 0
   #define __UNIX__ 1
 #endif
@@ -292,7 +313,9 @@ typedef int (*PrintfCallback)(const char *str, ...) R_PRINTF_CHECK(1, 2);
 #elif R_INLINE
   #define R_API inline
 #else
-  #if defined(__GNUC__) && __GNUC__ >= 4
+  #if __MINGW32__
+    #define R_API __declspec(dllexport)
+  #elif defined(__GNUC__) && __GNUC__ >= 4
     #define R_API __attribute__((visibility("default")))
   #elif defined(_MSC_VER)
     #define R_API __declspec(dllexport)
@@ -300,6 +323,8 @@ typedef int (*PrintfCallback)(const char *str, ...) R_PRINTF_CHECK(1, 2);
     #define R_API
   #endif
 #endif
+
+#define R_HIDDEN __attribute__((visibility("hidden")))
 
 #define R_LIB_VERSION_HEADER(x) \
 R_API const char *x##_version(void)
@@ -405,7 +430,7 @@ static inline void *r_new_copy(int size, void *data) {
 #define HAVE_REGEXP 1
 #endif
 
-#if __WINDOWS__
+#if __WINDOWS__ && !__MINGW32__
 #define PFMT64x "I64x"
 #define PFMT64d "I64d"
 #define PFMT64u "I64u"

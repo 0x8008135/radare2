@@ -279,7 +279,6 @@ R_API void r_core_bin_export_info(RCore *core, int mode) {
 	}
 }
 
-
 R_API bool r_core_bin_load_structs(RCore *core, const char *file) {
 	r_return_val_if_fail (core && core->io, false);
 	if (!file) {
@@ -296,7 +295,7 @@ R_API bool r_core_bin_load_structs(RCore *core, const char *file) {
 		eprintf ("Invalid char found in filename\n");
 		return false;
 	}
-	RBinOptions opt = { 0 };
+	RBinFileOptions opt = { 0 };
 	r_bin_open (core->bin, file, &opt);
 	RBinFile *bf = r_bin_cur (core->bin);
 	if (bf) {
@@ -1219,8 +1218,9 @@ R_API bool r_core_pdb_info(RCore *core, const char *file, PJ *pj, int mode) {
 	ut64 baddr = r_config_get_i (core->config, "bin.baddr");
 	if (core->bin->cur && core->bin->cur->o && core->bin->cur->o->baddr) {
 		baddr = core->bin->cur->o->baddr;
-	} else {
+	} else if (baddr == UT64_MAX) {
 		eprintf ("Warning: Cannot find base address, flags will probably be misplaced\n");
+		baddr = 0LL;
 	}
 
 	RPdb pdb = R_EMPTY;
@@ -1960,7 +1960,7 @@ R_API ut64 r_core_bin_impaddr(RBin *bin, int va, const char *name) {
 static int bin_imports(RCore *r, PJ *pj, int mode, int va, const char *name) {
 	RBinInfo *info = r_bin_get_info (r->bin);
 	int bin_demangle = r_config_get_i (r->config, "bin.demangle");
-	bool keep_lib = r_config_get_i (r->config, "bin.demangle.libs");
+	bool keep_lib = r_config_get_b (r->config, "bin.demangle.libs");
 	RTable *table = r_core_table (r, "imports");
 	r_return_val_if_fail (table, false);
 	RBinImport *import;
@@ -1976,7 +1976,7 @@ static int bin_imports(RCore *r, PJ *pj, int mode, int va, const char *name) {
 		return false;
 	}
 
-	RList *imports = r_bin_get_imports (r->bin);
+	const RList *imports = r_bin_get_imports (r->bin);
 	int cdsz = info? (info->bits == 64? 8: info->bits == 32? 4: info->bits == 16 ? 4: 0): 0;
 	if (IS_MODE_JSON (mode)) {
 		pj_a (pj);
@@ -2129,7 +2129,7 @@ typedef struct {
 
 static void snInit(RCore *r, SymName *sn, RBinSymbol *sym, const char *lang) {
 	int bin_demangle = lang != NULL;
-	bool keep_lib = r_config_get_i (r->config, "bin.demangle.libs");
+	bool keep_lib = r_config_get_b (r->config, "bin.demangle.libs");
 	if (!r || !sym || !sym->name) {
 		return;
 	}
@@ -2606,7 +2606,7 @@ static bool io_create_mem_map(RIO *io, RBinSection *sec, ut64 at) {
 	if (desc) {
 		RIOMap *map = r_io_map_get_at (io, at);
 		if (!map) {
-			r_io_map_add_batch (io, desc->fd, desc->perm, 0LL, at, gap);
+			r_io_map_add (io, desc->fd, desc->perm, 0LL, at, gap);
 		}
 		reused = true;
 	}
@@ -2660,7 +2660,7 @@ static void add_section(RCore *core, RBinSection *sec, ut64 addr, int fd) {
 		perm |= R_PERM_X;
 	}
 
-	RIOMap *map = r_io_map_add_batch (core->io, fd, perm, sec->paddr, addr, size);
+	RIOMap *map = r_io_map_add (core->io, fd, perm, sec->paddr, addr, size);
 	if (!map) {
 		free (map_name);
 		return;
@@ -3073,7 +3073,6 @@ static int bin_sections(RCore *r, PJ *pj, int mode, ut64 laddr, int va, ut64 at,
 		r_list_foreach_prev (io_section_info, it, ibs) {
 			add_section (r, ibs->sec, ibs->addr, ibs->fd);
 		}
-		r_io_update (r->io);
 	}
 	r_list_free (io_section_info);
 	io_section_info = NULL;
@@ -4387,8 +4386,9 @@ static bool r_core_bin_file_print(RCore *core, RBinFile *bf, PJ *pj, int mode) {
 			ut8 bits = info ? info->bits : 0;
 			const char *asmarch = r_config_get (core->config, "asm.arch");
 			const char *arch = info ? info->arch ? info->arch: asmarch: "unknown";
-			r_cons_printf ("%d %d %s-%d ba:0x%08"PFMT64x" sz:%"PFMT64d" %s\n",
-				bf->id, bf->fd, arch, bits, bf->o->baddr, bf->o->size, name);
+			const char *curstr = (core->allbins || bf == r_bin_cur (core->bin)) ? "*": "-";
+			r_cons_printf ("%s %d %d %s-%d ba:0x%08"PFMT64x" sz:%"PFMT64d" %s\n",
+				curstr, bf->id, bf->fd, arch, bits, bf->o->baddr, bf->o->size, name);
 		}
 		break;
 	}

@@ -73,11 +73,7 @@ static int r_main_version_verify(int show) {
 		}
 	}
 	if (ret) {
-		if (show) {
-			eprintf ("Warning: r2 library versions mismatch!\n");
-		} else {
-			eprintf ("Warning: r2 library versions mismatch! See r2 -V\n");
-		}
+		eprintf ("Warning: r2 library versions mismatch! Check r2 -V");
 	}
 	return ret;
 }
@@ -391,11 +387,11 @@ R_API int r_main_radare2(int argc, const char **argv) {
 	if (r_sys_getenv_asbool ("R2_DEBUG")) {
 		char *sysdbg = r_sys_getenv ("R2_DEBUG_TOOL");
 		char *fmt = (sysdbg && *sysdbg)
-			? r_str_newf ("%s %%d", sysdbg)
+			? strdup (sysdbg)
 #if __APPLE__
-			: r_str_newf ("lldb -p %%d");
+			: strdup ("lldb -p");
 #else
-			: r_str_newf ("gdb --pid %%d");
+			: strdup ("gdb --pid");
 #endif
 		r_sys_crash_handler (fmt);
 		free (fmt);
@@ -859,7 +855,10 @@ R_API int r_main_radare2(int argc, const char **argv) {
 	r_bin_force_plugin (r->bin, forcebin);
 
 	if (project_name) {
-		r_core_project_open (r, project_name);
+		if (!r_core_project_open (r, project_name)) {
+			eprintf ("Cannot find project.\n");
+			return 1;
+		}
 	}
 
 	if (do_connect) {
@@ -910,9 +909,9 @@ R_API int r_main_radare2(int argc, const char **argv) {
 			if (file && *file && *file != '.') {
 				complete_path = r_str_newf ("%s"R_SYS_DIR"%s", path, file);
 				if (r_str_endswith (complete_path, "gz")) {
-					r_sign_load_gz (r->anal, complete_path);
+					r_sign_load_gz (r->anal, complete_path, false);
 				} else {
-					r_sign_load (r->anal, complete_path);
+					r_sign_load (r->anal, complete_path, false);
 				}
 				free (complete_path);
 			}
@@ -1173,12 +1172,14 @@ R_API int r_main_radare2(int argc, const char **argv) {
 							}
 							/* Load rbin info from r2 dbg:// or r2 /bin/ls */
 							/* the baddr should be set manually here */
-							(void)r_core_bin_load (r, filepath, baddr);
-							// check if bin info is loaded and complain if -B was used
-							RBinFile *bi = r_bin_cur (r->bin);
-							bool haveBinInfo = bi && bi->o && bi->o->info && bi->o->info->type;
-							if (!haveBinInfo && baddr != UT64_MAX) {
-								eprintf ("Warning: Don't use -B on unknown files. Consider using -m.\n");
+							if (filepath) {
+								(void)r_core_bin_load (r, filepath, baddr);
+								// check if bin info is loaded and complain if -B was used
+								RBinFile *bi = r_bin_cur (r->bin);
+								bool haveBinInfo = bi && bi->o && bi->o->info && bi->o->info->type;
+								if (!haveBinInfo && baddr != UT64_MAX) {
+									eprintf ("Warning: Don't use -B on unknown files. Consider using -m.\n");
+								}
 							}
 						} else {
 							r_io_map_new (r->io, iod->fd, perms, 0LL, mapaddr, r_io_desc_size (iod));
@@ -1393,7 +1394,7 @@ R_API int r_main_radare2(int argc, const char **argv) {
 	}
 #if UNCOLORIZE_NONTTY
 #if __UNIX__
-	if (!r_cons_isatty ()) {
+	if (!r_cons_is_tty ()) {
 		r_config_set_i (r->config, "scr.color", COLOR_MODE_DISABLED);
 	}
 #endif
@@ -1498,29 +1499,30 @@ R_API int r_main_radare2(int argc, const char **argv) {
 				}
 
 				const char *prj = r_config_get (r->config, "prj.name");
-				if (r_core_project_is_saved (r)) {
-					break;
-				}
-				if (no_question_save) {
-					if (prj && *prj && y_save_project){
-						r_core_project_save (r, prj);
+				if (R_STR_ISNOTEMPTY (prj)) {
+					if (r_core_project_is_saved (r)) {
+						break;
 					}
-				} else {
-					question = r_str_newf ("Do you want to save the '%s' project? (Y/n)", prj);
-					if (prj && *prj && r_cons_yesno ('y', "%s", question)) {
-						r_core_project_save (r, prj);
+					if (no_question_save) {
+						if (y_save_project) {
+							r_core_project_save (r, prj);
+						}
+					} else {
+						question = r_str_newf ("Do you want to save the '%s' project? (Y/n)", prj);
+						if (r_cons_yesno ('y', "%s", question)) {
+							r_core_project_save (r, prj);
+						}
+						free (question);
 					}
-					free (question);
 				}
-
-				if (r_config_get_i (r->config, "scr.confirmquit")) {
+				if (r_config_get_b (r->config, "scr.confirmquit")) {
 					if (!r_cons_yesno ('n', "Do you want to quit? (Y/n)")) {
 						continue;
 					}
 				}
 			} else {
 				// r_core_project_save (r, prj);
-				if (debug && r_config_get_i (r->config, "dbg.exitkills")) {
+				if (debug && r_config_get_b (r->config, "dbg.exitkills")) {
 					r_debug_kill (r->dbg, 0, false, 9); // KILL
 				}
 

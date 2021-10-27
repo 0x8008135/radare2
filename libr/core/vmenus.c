@@ -3020,11 +3020,13 @@ static ut64 var_functions_show(RCore *core, int idx, int show, int cols) {
 // In visual mode, display the variables.
 static ut64 var_variables_show(RCore* core, int idx, int *vindex, int show, int cols) {
 	int i = 0;
+	int window, wdelta = (idx > 5) ? idx - 5 : 0;
 	const ut64 addr = var_functions_show (core, idx, 0, cols);
 	RAnalFunction* fcn = r_anal_get_fcn_in (core->anal, addr, R_ANAL_FCN_TYPE_NULL);
-	int window;
-	int wdelta = (idx > 5) ? idx - 5 : 0;
 	RListIter *iter;
+	if (!fcn) {
+		return UT64_MAX;
+	}
 	RList *list = r_anal_var_all_list (core->anal, fcn);
 	RAnalVar* var;
 	// Adjust the window size automatically.
@@ -3040,45 +3042,43 @@ static ut64 var_variables_show(RCore* core, int idx, int *vindex, int show, int 
 	}
 
 	r_list_foreach (list, iter, var) {
-		if (i >= wdelta) {
-			if (i > window + wdelta) {
-				r_cons_printf ("...\n");
-				break;
-			}
-			if (show) {
-				switch (var->kind & 0xff) {
-				case 'r':
-					{
-						RRegItem *r = r_reg_index_get (core->anal->reg, var->delta);
-						if (!r) {
-							eprintf ("Register not found");
-							break;
-						}
-						r_cons_printf ("%sarg %s %s @ %s\n",
-								i == *vindex ? "* ":"  ",
-								var->type, var->name,
-								r->name);
+		if (i > window + wdelta) {
+			r_cons_printf ("...\n");
+			break;
+		}
+		if (show) {
+			switch (var->kind & 0xff) {
+			case 'r':
+				{
+					RRegItem *r = r_reg_index_get (core->anal->reg, var->delta);
+					if (!r) {
+						eprintf ("Register not found");
+						break;
 					}
-					break;
-				case 'b':
-					r_cons_printf ("%s%s %s %s @ %s%s0x%x\n",
+					r_cons_printf ("%sarg %s %s @ %s\n",
 							i == *vindex ? "* ":"  ",
-							var->delta < 0? "var": "arg",
 							var->type, var->name,
-							core->anal->reg->name[R_REG_NAME_BP],
-							(var->kind == 'v')?"-":"+",
-							var->delta);
-					break;
-				case 's':
-					r_cons_printf ("%s%s %s %s @ %s%s0x%x\n",
-							i == *vindex ? "* ":"  ",
-							var->delta < 0? "var": "arg",
-							var->type, var->name,
-							core->anal->reg->name[R_REG_NAME_BP],
-							(var->kind == 'v')?"-":"+",
-							var->delta);
-					break;
+							r->name);
 				}
+				break;
+			case 'b':
+				r_cons_printf ("%s%s %s %s @ %s%s0x%x\n",
+						i == *vindex ? "* ":"  ",
+						var->delta < 0? "var": "arg",
+						var->type, var->name,
+						core->anal->reg->name[R_REG_NAME_BP],
+						(var->kind == 'v')?"-":"+",
+						var->delta);
+				break;
+			case 's':
+				r_cons_printf ("%s%s %s %s @ %s%s0x%x\n",
+						i == *vindex ? "* ":"  ",
+						var->delta < 0? "var": "arg",
+						var->type, var->name,
+						core->anal->reg->name[R_REG_NAME_SP],
+						(var->kind == 'v')?"-":"+",
+						var->delta + fcn->maxstack);
+				break;
 			}
 		}
 		++i;
@@ -3308,7 +3308,7 @@ R_API void r_core_visual_debugtraces(RCore *core, const char *input) {
 		} else {
 			ch = r_cons_readchar ();
 		}
-		if (ch == 4 || ch == -1) {
+		if (ch == 4 || (int)ch == -1) {
 			if (level == 0) {
 				goto beach;
 			}
@@ -3780,14 +3780,14 @@ R_API void r_core_seek_previous (RCore *core, const char *type) {
 	}
 }
 
-//define the data at offset according to the type (byte, word...) n times
-static void define_data_ntimes (RCore *core, ut64 off, int times, int type) {
+// define the data at offset according to the type (byte, word...) n times
+static void define_data_ntimes(RCore *core, ut64 off, int times, int type, int typesize) {
 	int i = 0;
-	r_meta_del (core->anal, R_META_TYPE_ANY, off, core->blocksize);
-	if (times < 0) {
+	if (times < 1) {
 		times = 1;
 	}
-	for (i = 0; i < times; i++, off += type) {
+	r_meta_del (core->anal, R_META_TYPE_ANY, off, typesize * times);
+	for (i = 0; i < times; i++, off += typesize) {
 		r_meta_set (core->anal, R_META_TYPE_DATA, off, type, "");
 	}
 }
@@ -3970,29 +3970,29 @@ onemoretime:
 		if (plen != core->blocksize) {
 			rep = plen / 2;
 		}
-		define_data_ntimes (core, off, rep, R_BYTE_DATA);
 		wordsize = 1;
+		define_data_ntimes (core, off, rep, R_BYTE_DATA, wordsize);
 		break;
 	case 'B': // "VdB"
 		if (plen != core->blocksize) {
 			rep = plen / 2;
 		}
-		define_data_ntimes (core, off, rep, R_WORD_DATA);
 		wordsize = 2;
+		define_data_ntimes (core, off, rep, R_WORD_DATA, wordsize);
 		break;
 	case 'w':
 		if (plen != core->blocksize) {
 			rep = plen / 4;
 		}
-		define_data_ntimes (core, off, rep, R_DWORD_DATA);
 		wordsize = 4;
+		define_data_ntimes (core, off, rep, R_DWORD_DATA, wordsize);
 		break;
 	case 'W':
 		if (plen != core->blocksize) {
 			rep = plen / 8;
 		}
-		define_data_ntimes (core, off, rep, R_QWORD_DATA);
 		wordsize = 8;
+		define_data_ntimes (core, off, rep, R_QWORD_DATA, wordsize);
 		break;
 	case 'm':
 		{

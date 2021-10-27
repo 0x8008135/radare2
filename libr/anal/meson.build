@@ -23,6 +23,7 @@ r_anal_sources = [
   'esil_dfg.c',
   'fcn.c',
   'flirt.c',
+  'global.c',
   'hint.c',
   'labels.c',
   'meta.c',
@@ -46,7 +47,7 @@ r_anal_sources = [
   'p/anal_6502_cs.c',
   'p/anal_8051.c',
   'p/anal_amd29k.c',
-  'p/anal_arc.c',
+  #'p/anal_arc.c',
   'p/anal_arm_cs.c',
   'p/anal_arm_gnu.c',
   'p/anal_avr.c',
@@ -96,7 +97,7 @@ r_anal_sources = [
   'p/anal_x86_cs.c',
   'p/anal_xap.c',
   'p/anal_xcore_cs.c',
-  'p/anal_xtensa.c',
+  #'p/anal_xtensa.c',
   'p/anal_z80.c',
   #'arch/gb/meta_gb_cmt.c',
   'arch/hexagon/hexagon_anal.c',
@@ -127,16 +128,43 @@ r_anal_sources = [
   '../asm/arch/v810/v810_disas.c',
   '../asm/arch/v850/v850_disas.c',
   '../asm/arch/wasm/wasm.c',
-  '../asm/arch/xtensa/gnu/xtensa-dis.c',
-  '../asm/arch/xtensa/gnu/elf32-xtensa.c',
-  '../asm/arch/xtensa/gnu/xtensa-isa.c',
-  '../asm/arch/xtensa/gnu/xtensa-modules.c',
+  #'../asm/arch/xtensa/gnu/xtensa-dis.c',
+  #'../asm/arch/xtensa/gnu/elf32-xtensa.c',
+  #'../asm/arch/xtensa/gnu/xtensa-isa.c',
+  #'../asm/arch/xtensa/gnu/xtensa-modules.c',
   '../asm/arch/pyc/opcode_all.c',
   '../asm/arch/pyc/opcode_anal.c',
   '../asm/arch/pyc/opcode_arg_fmt.c',
   '../asm/arch/pyc/opcode.c',
   '../asm/arch/pyc/pyc_dis.c'
 ]
+incdirs = [
+    'arch/gb',
+    'arch/hexagon'
+]
+
+if get_option('use_v35')
+r_anal_sources += [
+  'p/anal_arm_v35.c',
+  '../asm/arch/arm/v35arm64/arch-arm64/disassembler/decode.c',
+  '../asm/arch/arm/v35arm64/arch-arm64/disassembler/decode0.c',
+  '../asm/arch/arm/v35arm64/arch-arm64/disassembler/decode1.c',
+  '../asm/arch/arm/v35arm64/arch-arm64/disassembler/decode2.c',
+  '../asm/arch/arm/v35arm64/arch-arm64/disassembler/decode_fields32.c',
+  '../asm/arch/arm/v35arm64/arch-arm64/disassembler/decode_scratchpad.c',
+  '../asm/arch/arm/v35arm64/arch-arm64/disassembler/encodings_dec.c',
+  '../asm/arch/arm/v35arm64/arch-arm64/disassembler/encodings_fmt.c',
+  '../asm/arch/arm/v35arm64/arch-arm64/disassembler/format.c',
+  '../asm/arch/arm/v35arm64/arch-arm64/disassembler/gofer.c',
+  '../asm/arch/arm/v35arm64/arch-arm64/disassembler/operations.c',
+  '../asm/arch/arm/v35arm64/arch-arm64/disassembler/pcode.c',
+  '../asm/arch/arm/v35arm64/arch-arm64/disassembler/regs.c',
+  '../asm/arch/arm/v35arm64/arch-arm64/disassembler/sysregs.c'
+]
+incdirs += [
+    '../asm/arch/arm/v35arm64/arch-arm64/disassembler',
+]
+endif
 
 if get_option('sdb_cgen')
   r_anal_sources += r_anal_d_sources
@@ -144,10 +172,7 @@ endif
 
 r_anal_inc = [
   platform_inc,
-  include_directories(
-    'arch/gb',
-    'arch/hexagon',
-  )
+  include_directories(incdirs)
 ]
 
 r_anal = library('r_anal', r_anal_sources,

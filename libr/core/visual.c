@@ -233,9 +233,13 @@ static bool __core_visual_gogo(RCore *core, int ch) {
 	switch (ch) {
 	case 'g':
 		if (core->io->va) {
-			RIOMap *map = r_io_map_get_at (core->io, core->offset);
-			if (!map && !r_pvector_empty (&core->io->maps)) {
-				map = r_pvector_at (&core->io->maps, r_pvector_len (&core->io->maps) - 1);
+			map = r_io_map_get_at (core->io, core->offset);
+			if (!map) {
+				RIOBank *bank = r_io_bank_get (core->io, core->io->bank);
+				if (bank && r_list_length (bank->maprefs)) {
+					map = r_io_map_get (core->io,
+						((RIOMapRef *)r_list_get_top (bank->maprefs))->id);
+				}
 			}
 			if (map) {
 				r_core_seek (core, r_io_map_begin (map), true);
@@ -247,8 +251,12 @@ static bool __core_visual_gogo(RCore *core, int ch) {
 		return true;
 	case 'G':
 		map = r_io_map_get_at (core->io, core->offset);
-		if (!map && !r_pvector_empty (&core->io->maps)) {
-			map = r_pvector_at (&core->io->maps, 0);
+		if (!map) {
+			RIOBank *bank = r_io_bank_get (core->io, core->io->bank);
+			if (bank && r_list_length (bank->maprefs)) {
+				map = r_io_map_get (core->io,
+					((RIOMapRef *)r_list_get_top (bank->maprefs))->id);
+			}
 		}
 		if (map) {
 			RPrint *p = core->print;
@@ -486,7 +494,7 @@ R_API int r_core_visual_hud(RCore *core) {
 	char *homehud = r_str_home (R2_HOME_HUD);
 	char *res = NULL;
 	char *p = 0;
-	r_cons_singleton ()->context->color_mode = use_color;
+	r_cons_context ()->color_mode = use_color;
 
 	r_core_visual_showcursor (core, true);
 	if (c && *c && r_file_exists (c)) {
@@ -1522,16 +1530,16 @@ repeat:
 					res = r_str_appendf (res, "; ---------------------------\n");
 					switch (printMode) {
 					case 0:
-						dis = r_core_cmd_strf (core, "pd $r-4 @ 0x%08"PFMT64x, refi->addr);
+						dis = r_core_cmd_strf (core, "pd--6 @ 0x%08"PFMT64x, refi->addr);
 						break;
 					case 1:
-						dis = r_core_cmd_strf (core, "pd @ 0x%08"PFMT64x"-32", refi->addr);
+						dis = r_core_cmd_strf (core, "pds @ 0x%08"PFMT64x, refi->addr);
 						break;
 					case 2:
 						dis = r_core_cmd_strf (core, "px @ 0x%08"PFMT64x, refi->addr);
 						break;
 					case 3:
-						dis = r_core_cmd_strf (core, "pds @ 0x%08"PFMT64x, refi->addr);
+						dis = r_core_cmd_strf (core, "pxr @ 0x%08"PFMT64x, refi->addr);
 						break;
 					}
 					if (dis) {
@@ -3529,10 +3537,14 @@ R_API int r_core_visual_cmd(RCore *core, const char *arg) {
 						if (s) {
 							entry = s->vaddr;
 						} else {
-							RIOMap *map = r_pvector_pop (&core->io->maps);
+							RIOMap *map = NULL;
+							RIOBank *bank = r_io_bank_get (core->io, core->io->bank);
+							if (bank && r_list_length (bank->maprefs)) {
+								map = r_io_map_get (core->io,
+									((RIOMapRef *)r_list_get_top (bank->maprefs))->id);
+							}
 							if (map) {
-								entry = r_io_map_begin (map);
-								r_pvector_push_front (&core->io->maps, map);
+								entry = r_io_map_from (map);
 							} else {
 								entry = r_config_get_i (core->config, "bin.baddr");
 							}
@@ -3676,7 +3688,7 @@ R_API int r_core_visual_cmd(RCore *core, const char *arg) {
 }
 
 R_API void r_core_visual_title(RCore *core, int color) {
-	bool showDelta = r_config_get_i (core->config, "scr.slow");
+	bool showDelta = r_config_get_b (core->config, "asm.slow");
 	static ut64 oldpc = 0;
 	const char *BEGIN = core->cons->context->pal.prompt;
 	const char *filename;
@@ -4103,7 +4115,7 @@ static void visual_refresh(RCore *core) {
 	}
 	r_cons_flush ();
 	r_cons_print_clear ();
-	r_cons_singleton ()->noflush = true;
+	core->cons->context->noflush = true;
 
 	int hex_cols = r_config_get_i (core->config, "hex.cols");
 	int split_w = 12 + 4 + hex_cols + (hex_cols * 3);
@@ -4201,7 +4213,7 @@ static void visual_refresh(RCore *core) {
 	}
 #endif
 	blocksize = core->num->value? core->num->value: core->blocksize;
-	r_cons_singleton ()->noflush = false;
+	core->cons->context->noflush = false;
 	/* this is why there's flickering */
 	if (core->print->vflush) {
 		r_cons_visual_flush ();

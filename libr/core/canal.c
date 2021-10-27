@@ -277,20 +277,24 @@ R_API ut64 r_core_anal_address(RCore *core, ut64 addr) {
 		int _perm = -1;
 		if (core->io) {
 			// sections
-			void **it;
-			r_pvector_foreach (&core->io->maps, it) {
-				RIOMap *s = *it;
-				if (addr >= s->itv.addr && addr < (s->itv.addr + s->itv.size)) {
-					// sections overlap, so we want to get the one with lower perms
-					_perm = (_perm != -1) ? R_MIN (_perm, s->perm) : s->perm;
-					// TODO: we should identify which maps come from the program or other
-					//types |= R_ANAL_ADDR_TYPE_PROGRAM;
-					// find function those sections should be created by hand or esil init
-					if (s->name && strstr (s->name, "heap")) {
-						types |= R_ANAL_ADDR_TYPE_HEAP;
-					}
-					if (s->name && strstr (s->name, "stack")) {
-						types |= R_ANAL_ADDR_TYPE_STACK;
+			RIOBank *bank = r_io_bank_get (core->io, core->io->bank);
+			if (bank) {
+				RIOMapRef *mapref;
+				RListIter *iter;
+				r_list_foreach (bank->maprefs, iter, mapref) {
+					RIOMap *s = r_io_map_get (core->io, mapref->id);
+					if (addr >= s->itv.addr && addr < (s->itv.addr + s->itv.size)) {
+						// sections overlap, so we want to get the one with lower perms
+						_perm = (_perm != -1) ? R_MIN (_perm, s->perm) : s->perm;
+						// TODO: we should identify which maps come from the program or other
+						//types |= R_ANAL_ADDR_TYPE_PROGRAM;
+						// find function those sections should be created by hand or esil init
+						if (s->name && strstr (s->name, "heap")) {
+							types |= R_ANAL_ADDR_TYPE_HEAP;
+						}
+						if (s->name && strstr (s->name, "stack")) {
+							types |= R_ANAL_ADDR_TYPE_STACK;
+						}
 					}
 				}
 			}
@@ -1387,7 +1391,7 @@ R_API void r_core_anal_hint_print(RAnal* a, ut64 addr, int mode) {
 }
 
 static char *core_anal_graph_label(RCore *core, RAnalBlock *bb, int opts) {
-	int is_html = r_cons_singleton ()->is_html;
+	int is_html = r_cons_context ()->is_html;
 	int is_json = opts & R_CORE_ANAL_JSON;
 	char cmd[1024], file[1024], *cmdstr = NULL, *filestr = NULL, *str = NULL;
 	int line = 0, oline = 0, idx = 0;
@@ -1464,7 +1468,7 @@ static int core_anal_graph_construct_edges(RCore *core, RAnalFunction *fcn, int 
 	int is_keva = opts & R_CORE_ANAL_KEYVALUE;
 	int is_star = opts & R_CORE_ANAL_STAR;
 	int is_json = opts & R_CORE_ANAL_JSON;
-	int is_html = r_cons_singleton ()->is_html;
+	int is_html = r_cons_context ()->is_html;
 	char *pal_jump = palColorFor ("graph.true");
 	char *pal_fail = palColorFor ("graph.false");
 	char *pal_trfa = palColorFor ("graph.trufae");
@@ -1593,7 +1597,7 @@ static int core_anal_graph_construct_nodes(RCore *core, RAnalFunction *fcn, int 
 	int is_keva = opts & R_CORE_ANAL_KEYVALUE;
 	int is_star = opts & R_CORE_ANAL_STAR;
 	int is_json = opts & R_CORE_ANAL_JSON;
-	int is_html = r_cons_singleton ()->is_html;
+	int is_html = r_cons_context ()->is_html;
 	int left = 300;
 	int top = 0;
 
@@ -1662,7 +1666,7 @@ static int core_anal_graph_construct_nodes(RCore *core, RAnalFunction *fcn, int 
 			if (buf) {
 				r_io_read_at (core->io, bbi->addr, buf, bbi->size);
 				if (is_json_format_disasm) {
-					r_core_print_disasm (core->print, core, bbi->addr, buf, bbi->size, bbi->size, 0, 1, true, pj, NULL);
+					r_core_print_disasm (core, bbi->addr, buf, bbi->size, bbi->size, true, false, true, pj, NULL);
 				} else {
 					r_core_print_disasm_json (core, bbi->addr, buf, bbi->size, 0, pj);
 				}
@@ -2358,7 +2362,7 @@ static int RAnalRef_cmp(const RAnalRef* ref1, const RAnalRef* ref2) {
 
 R_API void r_core_anal_callgraph(RCore *core, ut64 addr, int fmt) {
 	const char *font = r_config_get (core->config, "graph.font");
-	int is_html = r_cons_singleton ()->is_html;
+	int is_html = r_cons_context ()->is_html;
 	bool refgraph = r_config_get_i (core->config, "graph.refs");
 	RListIter *iter, *iter2;
 	int usenames = r_config_get_i (core->config, "graph.json.usenames");;
@@ -3628,7 +3632,7 @@ R_API int r_core_anal_graph(RCore *core, ut64 addr, int opts) {
 	ut64 from = r_config_get_i (core->config, "graph.from");
 	ut64 to = r_config_get_i (core->config, "graph.to");
 	const char *font = r_config_get (core->config, "graph.font");
-	int is_html = r_cons_singleton ()->is_html;
+	int is_html = r_cons_context ()->is_html;
 	int is_json = opts & R_CORE_ANAL_JSON;
 	int is_json_format_disasm = opts & R_CORE_ANAL_JSON_FORMAT_DISASM;
 	int is_keva = opts & R_CORE_ANAL_KEYVALUE;
@@ -4007,7 +4011,7 @@ R_API int r_core_anal_search_xrefs(RCore *core, ut64 from, ut64 to, PJ *pj, int 
 	bool cfg_anal_strings = r_config_get_i (core->config, "anal.strings");
 	ut64 at;
 	int count = 0;
-	const int bsz = 8096;
+	int bsz = 8096;
 	RAnalOp op = { 0 };
 
 	if (from == to) {
@@ -4037,10 +4041,28 @@ R_API int r_core_anal_search_xrefs(RCore *core, ut64 from, ut64 to, PJ *pj, int 
 	r_cons_break_push (NULL, NULL);
 	at = from;
 	st64 asm_sub_varmin = r_config_get_i (core->config, "asm.sub.varmin");
+	int maxopsz = r_anal_archinfo (core->anal, R_ANAL_ARCHINFO_MAX_OP_SIZE);
+	int minopsz = r_anal_archinfo (core->anal, R_ANAL_ARCHINFO_MIN_OP_SIZE);
+	if (maxopsz < 1) {
+		maxopsz = 4;
+	}
+	if (minopsz < 1) {
+		minopsz = 1;
+	}
+	if (bsz < maxopsz) {
+		// wtf
+		eprintf ("Error: Something is really wrong deep inside\n");
+		free (block);
+		return -1;
+	}
 	while (at < to && !r_cons_is_breaked ()) {
 		int i = 0, ret = bsz;
 		if (!r_io_is_valid_offset (core->io, at, R_PERM_X)) {
 			break;
+		}
+		ut64 left = to - at;
+		if (bsz > left) {
+			bsz = left;
 		}
 		(void)r_io_read_at (core->io, at, buf, bsz);
 		memset (block, -1, bsz);
@@ -4055,11 +4077,17 @@ R_API int r_core_anal_search_xrefs(RCore *core, ut64 from, ut64 to, PJ *pj, int 
 			at += ret;
 			continue;
 		}
-		while (i < bsz && !r_cons_is_breaked ()) {
+		(void) r_anal_op (core->anal, &op, at, buf, bsz, R_ANAL_OP_MASK_BASIC | R_ANAL_OP_MASK_HINT);
+		while ((i + maxopsz) < bsz && !r_cons_is_breaked ()) {
+			r_anal_op_fini (&op);
 			ret = r_anal_op (core->anal, &op, at + i, buf + i, bsz - i, R_ANAL_OP_MASK_BASIC | R_ANAL_OP_MASK_HINT);
-			ret = ret > 0 ? ret : 1;
+			if (ret < 1) {
+				i += minopsz;
+				continue;
+			}
 			i += ret;
-			if (ret <= 0 || i > bsz) {
+			if (i > bsz) {
+				// at += minopsz;
 				break;
 			}
 			// find references
@@ -4116,10 +4144,12 @@ R_API int r_core_anal_search_xrefs(RCore *core, ut64 from, ut64 to, PJ *pj, int 
 			default:
 				break;
 			}
-			r_anal_op_fini (&op);
 		}
-		at += bsz;
 		r_anal_op_fini (&op);
+		if (i < 1) {
+			break;
+		}
+		at += i + 1;
 	}
 	r_cons_break_pop ();
 	free (buf);
@@ -4249,7 +4279,7 @@ R_API int r_core_anal_data(RCore *core, ut64 addr, int count, int depth, int wor
 	r_io_read_at (core->io, addr, buf, len);
 	buf[len - 1] = 0;
 
-	RConsPrintablePalette *pal = r_config_get_i (core->config, "scr.color")? &r_cons_singleton ()->context->pal: NULL;
+	RConsPrintablePalette *pal = r_config_get_i (core->config, "scr.color")? &r_cons_context ()->pal: NULL;
 	for (i = j = 0; j < count; j++) {
 		if (i >= len) {
 			r_io_read_at (core->io, addr + i, buf, len);
@@ -5597,8 +5627,8 @@ R_API int r_core_search_value_in_range(RCore *core, RInterval search_itv, ut64 v
 		bool res = r_io_read_at_mapped (core->io, from, buf, size);
 		if (!res || !memcmp (buf, "\xff\xff\xff\xff", 4) || !memcmp (buf, "\x00\x00\x00\x00", 4)) {
 			if (!isValidAddress (core, from)) {
-				ut64 next = r_io_map_next_address (core->io, from);
-				if (next == UT64_MAX) {
+				ut64 next = from;
+				if (!r_io_map_locate (core->io, &next, 1, 0)) {
 					from += sizeof (buf);
 				} else {
 					from += (next - from);

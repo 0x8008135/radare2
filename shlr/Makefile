@@ -71,7 +71,7 @@ endif
 endif
 SDB_URL=git://github.com/radareorg/sdb
 #SDB_URL=/Users/pancake/prg/sdb
-SPP_URL=git://github.com/radare/spp
+SPP_URL=git://github.com/trufae/spp
 PWD=$(shell pwd)
 SDB_CONFIG=${PWD}/sdb-config.mk
 
@@ -108,7 +108,7 @@ PIC=-fPIC
 endif
 
 SDB_HOST=sdb/sdb$(BUILD_EXT_EXE)
-SDB_LIBA=sdb/src/libsdb.a
+SDB_LIBA=sdb/src/libsdb.$(EXT_AR)
 
 $(SDB_HOST):
 	$(MAKE) sdb-host HOST_CC=$(HOST_CC) CC=$(HOST_CC)
@@ -142,10 +142,10 @@ sdb-target:
 	$(MAKE) -C sdb clean ; rm -f sdb/src/*.o sdb/src/sdb_version.h
 	$(MAKE) -C sdb/src sdb_version.h
 ifeq ($(EXT_EXE),.wasm)
-	$(MAKE) -C sdb/src ARCH=xxx RANLIB="${RANLIB}" CFLAGS_SHARED="${CFLAGS_SHARED} -DHAVE_MMAN=0" \
+	$(MAKE) -C sdb/src ARCH=xxx EXT_AR=.$(EXT_AR) RANLIB="${RANLIB}" CFLAGS_SHARED="${CFLAGS_SHARED} -DHAVE_MMAN=0" \
 		CC="${CC}" AR="${AR}" ARCH=undefined CFLAGS='${CFLAGS} -DHAVE_MMAN=0' LDFLAGS='${LDFLAGS}' libsdb.$(EXT_AR)
 else
-	$(MAKE) -C sdb/src ARCH=xxx RANLIB="${RANLIB}" CFLAGS_SHARED="${CFLAGS_SHARED}" \
+	$(MAKE) -C sdb/src ARCH=xxx EXT_AR=.$(EXT_AR) RANLIB="${RANLIB}" CFLAGS_SHARED="${CFLAGS_SHARED}" \
 		CC="${CC}" AR="${AR}" ARCH=undefined LDFLAGS='${LDFLAGS}' libsdb.$(EXT_AR)
 endif
 	$(RANLIB) sdb/src/libsdb.$(EXT_AR)
@@ -265,7 +265,7 @@ all:
 endif
 
 capstone-build: capstone
-	cd capstone && CFLAGS="-Dmips=mips ${CAPSTONE_CFLAGS} $(CFLAGS)" LDFLAGS="$(LDFLAGS)" \
+	cd capstone && CFLAGS="${CAPSTONE_CFLAGS} $(CFLAGS)" LDFLAGS="$(LDFLAGS)" \
 		$(MAKE) $(CAPSTONE_MAKEFLAGS) CC="$(CC)" AR_EXT=a IS_CYGWIN=0 CAPSTONE_STATIC=yes CAPSTONE_SHARED=no \
 		RANLIB="$(RANLIB)" LIBARCHS="" AR="$(AR)" IS_MINGW=0 libcapstone.a
 ifneq (${EXT_AR},a)

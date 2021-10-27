@@ -5,7 +5,6 @@
 #include "r_cons.h"
 #include "r_core.h"
 #include "r_io.h"
-#include "cmd_helps.h"
 
 static const char *help_msg_w[] = {
 	"Usage:","w[x] [str] [<file] [<<EOF] [@addr]","",
@@ -30,8 +29,7 @@ static const char *help_msg_w[] = {
 	"wp","[?] -|file","apply radare patch file. See wp? fmi",
 	"wr"," 10","write 10 random bytes",
 	"ws"," pstring","write 1 byte for length and then the string",
-	"wt[f]","[?] file [sz]","write to file (from current seek, blocksize or sz bytes)",
-	"wts"," host:port [sz]", "send data to remote host:port via tcp://",
+	"wt","[?] file [sz]","write to file (from current seek, blocksize or sz bytes)",
 	"ww"," foobar","write wide string 'f\\x00o\\x00o\\x00b\\x00a\\x00r\\x00'",
 	"wx","[?][fs] 9090","write two intel nops (from wxfile or wxseek)",
 	"wv","[?] eip+34","write 32-64 bit value honoring cfg.bigendian",
@@ -103,6 +101,7 @@ static const char *help_msg_wo[] = {
 	"woD","[algo] [key] [IV]","decrypt current block with given algo and key",
 	"woe"," [from to] [step] [wsz=1]","..  create sequence",
 	"woE"," [algo] [key] [IV]", "encrypt current block with given algo and key",
+	"woi","", "inverse bytes in current block",
 	"wol"," [val]","<<= shift left",
 	"wom"," [val]", "*=  multiply",
 	"woo"," [val]","|=  or",
@@ -161,7 +160,7 @@ static const char *help_msg_wv[] = {
 	"wv", " 0x834002", "write dword with this value",
 	"wv1", " 234", "write one byte with this value",
 	"wv2", " 234", "write unsigned short (2 bytes) with this number",
-	"wv4", " 234", "write dword (4 bytes) with this number",
+	"wv4", " 1 2 3", "write N space-separated dword (4 bytes)",
 	"wv8", " 234", "write qword (8 bytes) with this number",
 	"wvf", " 3.14", "write float value (4 bytes)",
 	"wvF", " 3.14", "write double value (8 bytes)",
@@ -226,18 +225,17 @@ static bool encrypt_or_decrypt_block(RCore *core, const char *algo, const char *
 		binkey = (ut8 *)strdup (key);
 		keylen = r_hex_str2bin (key, binkey);
 	}
+	if (!binkey) {
+		eprintf ("Cannot allocate %d byte(s)\n", keylen);
+		return false;
+	}
 	if (!no_key_mode && keylen < 1) {
-		eprintf ("%s key not defined. Use -S [key]\n", ((!direction) ? "Encryption" : "Decryption"));
+		eprintf ("%s key not defined. Use -S [key]\n", ((!direction)? "Encryption": "Decryption"));
 		free (binkey);
 		return false;
 	}
 	RCrypto *cry = r_crypto_new ();
 	if (r_crypto_use (cry, algo)) {
-		if (!binkey) {
-			eprintf ("Cannot allocate %d byte(s)\n", keylen);
-			r_crypto_free (cry);
-			return false;
-		}
 		if (r_crypto_set_key (cry, binkey, keylen, 0, direction)) {
 			if (iv) {
 				ut8 *biniv = malloc (strlen (iv) + 1);
@@ -252,7 +250,6 @@ static bool encrypt_or_decrypt_block(RCore *core, const char *algo, const char *
 				}
 			}
 			r_crypto_update (cry, (const ut8*)core->block, core->blocksize);
-			r_crypto_final (cry, NULL, 0);
 
 			int result_size = 0;
 			ut8 *result = r_crypto_get_output (cry, &result_size);
@@ -313,27 +310,28 @@ static int wo_handler_old(void *data, const char *input) {
 	int len;
 	int value;
 	switch (input[0]) {
-	case 'e':
+	case 'e': // "woe"
 		if (input[1]!=' ') {
 			r_cons_printf ("Usage: 'woe from-to step'\n");
 			return -1;
 		}
 		/* fallthru */
-	case 'a':
-	case 's':
-	case 'A':
-	case 'x':
-	case 'r':
-	case 'l':
-	case 'm':
-	case 'd':
-	case 'o':
-	case 'w':
+	case 'a': // "woa"
+	case 's': // "wos"
+	case 'A': // "woA"
+	case 'x': // "wox"
+	case 'r': // "wor"
+	case 'l': // "wol"
+	case 'm': // "wom"
+	case 'i': // "woi"
+	case 'd': // "wod"
+	case 'o': // "woo"
+	case 'w': // "wow"
 	case '2': // "wo2"
 	case '4': // "wo4"
 	case '8': // "wo8"
 		if (input[1]) {  // parse val from arg
-			r_core_write_op (core, input + 2, input[0]);
+			r_core_write_op (core, r_str_trim_head_ro (input + 2), input[0]);
 		} else {  // use clipboard instead of val
 			r_core_write_op (core, NULL, input[0]);
 		}
@@ -504,121 +502,64 @@ static void cmd_write_value(RCore *core, const char *input) {
 	case '4': type = 4; break;
 	case '8': type = 8; break;
 	}
-	if (input[0] && input[1]) {
-		off = r_num_math (core->num, input+1);
-	}
-	if (core->io->desc) {
-		r_io_use_fd (core->io, core->io->desc->fd);
-	}
-	ut64 res = r_io_seek (core->io, core->offset, R_IO_SEEK_SET);
-	if (res == UT64_MAX) return;
-	if (type == 0) {
-		type = (off&UT64_32U)? 8: 4;
-	}
-	switch (type) {
-	case 1:
-		r_write_ble8 (buf, (ut8)(off & UT8_MAX));
-		if (!r_io_write (core->io, buf, 1)) {
-			cmd_write_fail (core);
-		} else {
-			WSEEK (core, 1);
+	ut64 addr = core->offset;
+	char *inp = r_str_trim_dup (input + 1);
+	RList *list = r_str_split_list (inp, " ", 0); // or maybe comma :?
+	char *cinp;
+	RListIter *iter;
+	r_list_foreach (list, iter, cinp) {
+		if (input[0] && input[1]) {
+			off = r_num_math (core->num, cinp);
 		}
-		break;
-	case 2:
-		r_write_ble16 (buf, (ut16)(off & UT16_MAX), be);
-		if (!r_io_write (core->io, buf, 2)) {
-			cmd_write_fail (core);
-		} else {
-			WSEEK (core, 2);
+		if (core->io->desc) {
+			r_io_use_fd (core->io, core->io->desc->fd);
 		}
-		break;
-	case 4:
-		r_write_ble32 (buf, (ut32)(off & UT32_MAX), be);
-		if (!r_io_write (core->io, buf, 4)) {
-			cmd_write_fail (core);
-		} else {
-			WSEEK (core, 4);
+		ut64 res = r_io_seek (core->io, addr, R_IO_SEEK_SET);
+		if (res == UT64_MAX) {
+			return;
 		}
-		break;
-	case 8:
-		r_write_ble64 (buf, off, be);
-		if (!r_io_write (core->io, buf, 8)) {
-			cmd_write_fail (core);
-		} else {
-			WSEEK (core, 8);
+		if (type == 0) {
+			type = (off & UT64_32U)? 8: 4;
 		}
-		break;
+		switch (type) {
+		case 1:
+			r_write_ble8 (buf, (ut8)(off & UT8_MAX));
+			if (!r_io_write (core->io, buf, 1)) {
+				cmd_write_fail (core);
+			} else {
+				WSEEK (core, 1);
+			}
+			break;
+		case 2:
+			r_write_ble16 (buf, (ut16)(off & UT16_MAX), be);
+			if (!r_io_write (core->io, buf, 2)) {
+				cmd_write_fail (core);
+			} else {
+				WSEEK (core, 2);
+			}
+			break;
+		case 4:
+			r_write_ble32 (buf, (ut32)(off & UT32_MAX), be);
+			if (!r_io_write (core->io, buf, 4)) {
+				cmd_write_fail (core);
+			} else {
+				WSEEK (core, 4);
+			}
+			break;
+		case 8:
+			r_write_ble64 (buf, off, be);
+			if (!r_io_write (core->io, buf, 8)) {
+				cmd_write_fail (core);
+			} else {
+				WSEEK (core, 8);
+			}
+			break;
+		}
+		addr += type;
 	}
+	r_list_free (list);
+	free (inp);
 	r_core_block_read (core);
-}
-
-static RCmdStatus common_wv_handler(RCore *core, int argc, const char **argv, int type) {
-	ut64 off = 0LL;
-	ut8 buf[sizeof(ut64)];
-	int wseek = r_config_get_i (core->config, "cfg.wseek");
-	bool be = r_config_get_i (core->config, "cfg.bigendian");
-
-	core->num->value = 0;
-	if (argc != 2) {
-		return R_CMD_STATUS_WRONG_ARGS;
-	}
-
-	off = r_num_math (core->num, argv[1]);
-	if (core->io->desc) {
-		r_io_use_fd (core->io, core->io->desc->fd);
-	}
-
-	ut64 res = r_io_seek (core->io, core->offset, R_IO_SEEK_SET);
-	if (res == UT64_MAX) {
-		return R_CMD_STATUS_ERROR;
-	}
-	if (type == 0) {
-		type = off & UT64_32U? 8: 4;
-	}
-
-	switch (type) {
-	case 1:
-		r_write_ble8 (buf, (ut8)(off & UT8_MAX));
-		break;
-	case 2:
-		r_write_ble16 (buf, (ut16)(off & UT16_MAX), be);
-		break;
-	case 4:
-		r_write_ble32 (buf, (ut32)(off & UT32_MAX), be);
-		break;
-	case 8:
-		r_write_ble64 (buf, off, be);
-		break;
-	}
-
-	if (!r_io_write (core->io, buf, type)) {
-		cmd_write_fail (core);
-	} else if (wseek) {
-		r_core_seek_delta (core, type);
-	}
-
-	r_core_block_read (core);
-	return R_CMD_STATUS_OK;
-}
-
-static RCmdStatus wv_handler(RCore *core, int argc, const char **argv) {
-	return common_wv_handler (core, argc, argv, 0);
-}
-
-static RCmdStatus wv1_handler(RCore *core, int argc, const char **argv) {
-	return common_wv_handler (core, argc, argv, 1);
-}
-
-static RCmdStatus wv2_handler(RCore *core, int argc, const char **argv) {
-	return common_wv_handler (core, argc, argv, 2);
-}
-
-static RCmdStatus wv4_handler(RCore *core, int argc, const char **argv) {
-	return common_wv_handler (core, argc, argv, 4);
-}
-
-static RCmdStatus wv8_handler(RCore *core, int argc, const char **argv) {
-	return common_wv_handler (core, argc, argv, 8);
 }
 
 static bool cmd_wff(RCore *core, const char *input) {
@@ -645,12 +586,21 @@ static bool cmd_wff(RCore *core, const char *input) {
 			free (out);
 		}
 	}
-	
-	if (*a == '$') {
-		const char *res = r_cmd_alias_get (core->rcmd, a, 1);
-		if (res) {
-			buf = (ut8*)strdup (res);
-			size = strlen (res);
+
+	if (*a == '$' && !a[1]) {
+		eprintf ("No alias name given.\n");
+	} else if (*a == '$') {
+		RCmdAliasVal *v = r_cmd_alias_get (core->rcmd, a+1);
+		if (v) {
+			buf = malloc (v->sz);
+			if (buf) {
+				size = v->sz;
+				memcpy (buf, v->data, size);
+			} else {
+				size = 0;
+			}
+		} else {
+			eprintf ("No such alias \"$%s\"\n", a+1);
 		}
 	} else {
 		buf = (ut8*) r_file_slurp (a, &size);
@@ -911,22 +861,6 @@ static int wB_handler_old(void *data, const char *input) {
 	return 0;
 }
 
-static RCmdStatus wB_handler(RCore *core, int argc, const char **argv) {
-	if (argc != 2) {
-		return R_CMD_STATUS_WRONG_ARGS;
-	}
-	cmd_write_bits (core, 1, r_num_math (core->num, argv[1]));
-	return R_CMD_STATUS_OK;
-}
-
-static RCmdStatus wB_minus_handler(RCore *core, int argc, const char **argv) {
-	if (argc != 2) {
-		return R_CMD_STATUS_WRONG_ARGS;
-	}
-	cmd_write_bits (core, 0, r_num_math (core->num, argv[1]));
-	return R_CMD_STATUS_OK;
-}
-
 static int w0_handler_common(RCore *core, ut64 len) {
 	int res = 0;
 	if (len > 0) {
@@ -952,14 +886,6 @@ static int w0_handler_old(void *data, const char *input) {
 	return w0_handler_common (core, len);
 }
 
-static RCmdStatus w0_handler(RCore *core, int argc, const char **argv) {
-	if (argc != 2) {
-		return R_CMD_STATUS_WRONG_ARGS;
-	}
-	ut64 len = r_num_math (core->num, argv[1]);
-	return r_cmd_int2status (w0_handler_common (core, len));
-}
-
 static int w_incdec_handler_old(void *data, const char *input, int inc) {
 	RCore *core = (RCore *)data;
 	st64 num = 1;
@@ -977,35 +903,6 @@ static int w_incdec_handler_old(void *data, const char *input, int inc) {
 		eprintf ("Usage: w[1248][+-][num]   # inc/dec byte/word/..\n");
 	}
 	return 0;
-}
-
-static RCmdStatus w_incdec_handler(RCore *core, int argc, const char **argv, int inc_size) {
-	if (argc > 2) {
-		return R_CMD_STATUS_WRONG_ARGS;
-	}
-	st64 num = argc > 1? r_num_math (core->num, argv[1]): 1;
-	const char *command = argv[0];
-	if (command[strlen (command) - 1] == '-') {
-		num *= -1;
-	}
-	cmd_write_inc (core, inc_size, num);
-	return R_CMD_STATUS_OK;
-}
-
-static RCmdStatus w1_incdec_handler(RCore *core, int argc, const char **argv) {
-	return w_incdec_handler (core, argc, argv, 1);
-}
-
-static RCmdStatus w2_incdec_handler(RCore *core, int argc, const char **argv) {
-	return w_incdec_handler (core, argc, argv, 2);
-}
-
-static RCmdStatus w4_incdec_handler(RCore *core, int argc, const char **argv) {
-	return w_incdec_handler (core, argc, argv, 4);
-}
-
-static RCmdStatus w8_incdec_handler(RCore *core, int argc, const char **argv) {
-	return w_incdec_handler (core, argc, argv, 8);
 }
 
 static int w6_handler_old(void *data, const char *input) {
@@ -1519,16 +1416,6 @@ static int w_handler_old(void *data, const char *input) {
 	return 0;
 }
 
-static RCmdStatus w_handler(RCore *core, int argc, const char **argv) {
-	if (argc < 2) {
-		return R_CMD_STATUS_WRONG_ARGS;
-	}
-	char *s = r_str_array_join (argv + 1, argc - 1, " ");
-	w_handler_common (core, s);
-	free (s);
-	return R_CMD_STATUS_OK;
-}
-
 static int wz_handler_old(void *data, const char *input) {
 	RCore *core = (RCore *)data;
 	int wseek = r_config_get_i (core->config, "cfg.wseek");
@@ -1555,10 +1442,11 @@ static int wt_handler_old(void *data, const char *input) {
 	RCore *core = (RCore *)data;
 	char *str = strdup (input);
 	char *ostr = str;
+	char *hfilename = NULL;
 	const char *filename = "";
 	char _fn[32];
 	_fn[0] = 0;
-	char *tmp;
+	char *size_sep;
 	if (*str == 's') { // "wts"
 		if (str[1] == ' ') {
 			eprintf ("Write to server\n");
@@ -1647,6 +1535,14 @@ static int wt_handler_old(void *data, const char *input) {
 						return 0;
 					}
 					filename = r_str_trim_head_ro (str);
+					if (r_str_startswith (filename, "base64:")) {
+						const char *encoded = filename + 7;
+						char *decoded = (char *)sdb_decode (encoded, NULL);
+						if (decoded) {
+							hfilename = decoded;
+							filename = decoded;
+						}
+					}
 				} else {
 					filename = "";
 				}
@@ -1668,27 +1564,47 @@ static int wt_handler_old(void *data, const char *input) {
 		} else {
 			filename = str + 1;
 		}
-		tmp = *str? strchr (str + 1, ' ') : NULL;
+		size_sep = *str? strchr (str + 1, ' ') : NULL;
 		if (!filename || !*filename) {
 			const char* prefix = r_config_get (core->config, "cfg.prefixdump");
 			snprintf (_fn, sizeof (_fn), "%s.0x%08"PFMT64x, prefix, poff);
 			filename = _fn;
 		}
-		if (tmp) {
+
+		/* TODO: I think this logic can be cleaned up, size_sep looks tacked-on */
+		if (size_sep) {
 			if (toend) {
 				sz = r_io_fd_size (core->io, core->io->desc->fd) - core->offset;
 				if (sz < 0) {
 					eprintf ("Warning: File size is unknown.");
 				}
 			} else {
-				sz = (st64) r_num_math (core->num, tmp + 1);
-				*tmp = 0;
+				sz = (st64) r_num_math (core->num, size_sep + 1);
+				/* Don't attempt to write if we can't parse size */
+				if (sz < 1) {
+					eprintf ("%s is not a valid size.\n", size_sep + 1);
+					sz = -1;
+				}
+				*size_sep = '\0';
 			}
-			if ((st64)sz < 1) {
-				// wtf?
-				sz = 0;
-			} else if (!r_core_dump (core, filename, poff, (ut64)sz, append)) {
-				sz = -1;
+
+			// XXX: this branch didn't handle aliases at all before
+			// but im not fixing the duplication rn
+			if (*filename == '$') {
+				if (append) {
+					if (sz > 0 && r_cmd_alias_append_raw (core->rcmd, filename+1, core->block, sz)) {
+						eprintf ("Alias \"$%s\" is a command - will not attempt to append.\n", filename+1);
+					}
+				} else {
+					if (sz > 0) {
+						r_cmd_alias_set_raw (core->rcmd, filename+1, core->block, sz);
+					}
+				}
+			} else {
+				/* XXX: r_core_dump vs r_file_dump below? */
+				if (sz > 0 && !r_core_dump (core, filename, poff, (ut64)sz, append)) {
+					sz = -1;
+				}
 			}
 		} else {
 			if (toend) {
@@ -1705,13 +1621,16 @@ static int wt_handler_old(void *data, const char *input) {
 					sz = -1;
 				}
 			} else {
-				sz = core->blocksize;
 				if (*filename == '$') {
-					char *data = r_str_ndup ((const char *)core->block, sz);
-					r_cmd_alias_set (core->rcmd, filename, data, 1);
-					free (data);
+					if (append) {
+						if (r_cmd_alias_append_raw (core->rcmd, filename+1, core->block, sz)) {
+							eprintf ("Alias \"$%s\" is a command - will not attempt to append.\n", filename+1);
+						}
+					} else {
+						r_cmd_alias_set_raw (core->rcmd, filename+1, core->block, sz);
+					}
 				} else {
-					if (!r_file_dump (filename, core->block, sz, append)) {
+					if (sz > 0 && !r_file_dump (filename, core->block, sz, append)) {
 						sz = -1;
 					}
 				}
@@ -1722,6 +1641,8 @@ static int wt_handler_old(void *data, const char *input) {
 					sz, poff, filename);
 		}
 	}
+	free (ostr);
+	free (hfilename);
 	return 0;
 }
 
@@ -2224,63 +2145,4 @@ static int cmd_write(void *data, const char *input) {
 	}
 	r_core_block_read (core);
 	return 0;
-}
-
-static void cmd_write_init(RCore *core, RCmdDesc *parent) {
-	DEFINE_CMD_DESCRIPTOR (core, w);
-	DEFINE_CMD_DESCRIPTOR (core, wa);
-	DEFINE_CMD_DESCRIPTOR (core, wA);
-	DEFINE_CMD_DESCRIPTOR (core, wc);
-	DEFINE_CMD_DESCRIPTOR (core, we);
-	DEFINE_CMD_DESCRIPTOR (core, wo);
-	DEFINE_CMD_DESCRIPTOR (core, wop);
-	DEFINE_CMD_DESCRIPTOR (core, wp);
-	DEFINE_CMD_DESCRIPTOR (core, wt);
-	DEFINE_CMD_DESCRIPTOR (core, wv);
-	DEFINE_CMD_DESCRIPTOR (core, wx);
-
-	DEFINE_CMD_ARGV_GROUP_WITH_CHILD (core, wB, parent);
-	DEFINE_CMD_ARGV_DESC_SPECIAL (core, wB-, wB_minus, wB_cd);
-
-	DEFINE_CMD_ARGV_GROUP_WITH_CHILD (core, wv, parent);
-	DEFINE_CMD_ARGV_DESC (core, wv1, wv_cd);
-	DEFINE_CMD_ARGV_DESC (core, wv2, wv_cd);
-	DEFINE_CMD_ARGV_DESC (core, wv4, wv_cd);
-	DEFINE_CMD_ARGV_DESC (core, wv8, wv_cd);
-
-	DEFINE_CMD_ARGV_DESC (core, w0, parent);
-
-	DEFINE_CMD_ARGV_DESC_INNER (core, w, w_incdec, parent);
-	DEFINE_CMD_ARGV_DESC_DETAIL (core, w1, w1, w_incdec_cd, NULL, &w1_incdec_help);
-	DEFINE_CMD_ARGV_DESC_DETAIL (core, w1+, w1_inc, w1_cd, w1_incdec_handler, &w1_inc_help);
-	DEFINE_CMD_ARGV_DESC_DETAIL (core, w1-, w1_dec, w1_cd, w1_incdec_handler, &w1_dec_help);
-	DEFINE_CMD_ARGV_DESC_DETAIL (core, w2, w2, w_incdec_cd, NULL, &w2_incdec_help);
-	DEFINE_CMD_ARGV_DESC_DETAIL (core, w2+, w2_inc, w2_cd, w2_incdec_handler, &w2_inc_help);
-	DEFINE_CMD_ARGV_DESC_DETAIL (core, w2-, w2_dec, w2_cd, w2_incdec_handler, &w2_dec_help);
-	DEFINE_CMD_ARGV_DESC_DETAIL (core, w4, w4, w_incdec_cd, NULL, &w4_incdec_help);
-	DEFINE_CMD_ARGV_DESC_DETAIL (core, w4+, w4_inc, w4_cd, w4_incdec_handler, &w4_inc_help);
-	DEFINE_CMD_ARGV_DESC_DETAIL (core, w4-, w4_dec, w4_cd, w4_incdec_handler, &w4_dec_help);
-	DEFINE_CMD_ARGV_DESC_DETAIL (core, w8, w8, w_incdec_cd, NULL, &w8_incdec_help);
-	DEFINE_CMD_ARGV_DESC_DETAIL (core, w8+, w8_inc, w8_cd, w8_incdec_handler, &w8_inc_help);
-	DEFINE_CMD_ARGV_DESC_DETAIL (core, w8-, w8_dec, w8_cd, w8_incdec_handler, &w8_dec_help);
-
-	DEFINE_CMD_OLDINPUT_DESC (core, w6, parent);
-	DEFINE_CMD_OLDINPUT_DESC (core, wh, parent);
-	DEFINE_CMD_OLDINPUT_DESC (core, we, parent);
-	DEFINE_CMD_OLDINPUT_DESC (core, wp, parent);
-	DEFINE_CMD_OLDINPUT_DESC (core, wu, parent);
-	DEFINE_CMD_OLDINPUT_DESC (core, wr, parent);
-	DEFINE_CMD_OLDINPUT_DESC (core, wA, parent);
-	DEFINE_CMD_OLDINPUT_DESC (core, wc, parent);
-	DEFINE_CMD_OLDINPUT_DESC (core, wz, parent);
-	DEFINE_CMD_OLDINPUT_DESC (core, wt, parent);
-	DEFINE_CMD_OLDINPUT_DESC (core, wf, parent);
-	DEFINE_CMD_OLDINPUT_DESC (core, ww, parent);
-	DEFINE_CMD_OLDINPUT_DESC (core, wx, parent);
-	DEFINE_CMD_OLDINPUT_DESC (core, wa, parent);
-	DEFINE_CMD_OLDINPUT_DESC (core, wb, parent);
-	DEFINE_CMD_OLDINPUT_DESC (core, wm, parent);
-	DEFINE_CMD_OLDINPUT_DESC (core, wo, parent);
-	DEFINE_CMD_OLDINPUT_DESC (core, wd, parent);
-	DEFINE_CMD_OLDINPUT_DESC (core, ws, parent);
 }
