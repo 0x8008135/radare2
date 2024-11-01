@@ -95,6 +95,7 @@ static RASN1Object *asn1_parse_header(const ut8 *buffer_base, const ut8 *buffer,
 		R_LOG_DEBUG ("Truncated object");
 		goto out_error;
 	}
+	obj->hlen = obj->sector - buffer;
 	return obj;
 out_error:
 	free (obj);
@@ -347,8 +348,6 @@ R_API char *r_asn1_object_tostring(RASN1Object *obj, ut32 depth, RStrBuf *sb, PJ
 	}
 	char temp_name[4096] = {0};
 	ut32 i;
-	ut8 hlen = 0;
-	ut32 len = obj->length;
 
 	// this shall not be freed. it's a pointer into the buffer.
 	RASN1String* asn1str = NULL;
@@ -502,13 +501,6 @@ R_API char *r_asn1_object_tostring(RASN1Object *obj, ut32 depth, RStrBuf *sb, PJ
 	if (asn1str) {
 		string = asn1str->string;
 	}
-	for (i = 0; i < 4; i++) {
-		if (len & 0xFF) {
-			hlen++;
-		}
-		len >>= 8;
-	}
-
 	switch (fmtmode) {
 	case 'q': // pFaq
 		// QUIET MODE
@@ -563,12 +555,7 @@ R_API char *r_asn1_object_tostring(RASN1Object *obj, ut32 depth, RStrBuf *sb, PJ
 				r_strbuf_append (sb, "└── ");
 			}
 		}
-		if (obj->tag == TAG_SEQUENCE || obj->tag == TAG_SET || obj->klass == CLASS_CONTEXT) {
-			hlen += 2;
-		} else {
-			hlen += 1;
-		}
-		r_strbuf_appendf (sb, " [@ 0x%" PFMT64x "](0x%x bytes)", obj->offset, hlen + obj->length);
+		r_strbuf_appendf (sb, " [@ 0x%" PFMT64x "](0x%x bytes)", obj->offset, obj->hlen + obj->length);
 		if (obj->tag == TAG_BITSTRING || obj->tag == TAG_INTEGER || obj->tag == TAG_GENERALSTRING) {
 			asn1_hexstring (obj, temp_name, sizeof (temp_name), depth, fmtmode);
 			if (strlen (temp_name) > 100) {
@@ -600,13 +587,7 @@ R_API char *r_asn1_object_tostring(RASN1Object *obj, ut32 depth, RStrBuf *sb, PJ
 		}
 		r_strbuf_appendf (sb, "%#8" PFMT64x, obj->offset);
 
-		if (obj->tag == TAG_SEQUENCE || obj->tag == TAG_SET || obj->klass == CLASS_CONTEXT) {
-			hlen += 2;
-		} else {
-			hlen += 1;
-		}
-
-		r_strbuf_appendf (sb, " %#8x  %4d %4s %-20s: ", hlen + obj->length, depth, obj->form? "cons": "prim", name);
+		r_strbuf_appendf (sb, " %#8x  %4d %4s %-20s: ", obj->hlen + obj->length, depth, obj->form? "cons": "prim", name);
 
 		if (obj->tag == TAG_BITSTRING || obj->tag == TAG_INTEGER || obj->tag == TAG_GENERALSTRING) {
 			asn1_hexstring (obj, temp_name, sizeof (temp_name), depth, fmtmode);
