@@ -3,7 +3,7 @@ name: build
 on:
   push:
     branches:
-      - master
+      - fix_asn1
   pull_request:
 
 jobs:
